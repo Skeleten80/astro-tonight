@@ -4,6 +4,7 @@ import SwiftUI
 struct TargetDetailView: View {
     let target: RankedTarget
     @ObservedObject var store: TargetStore
+    @ObservedObject var sessions: SessionStore
 
     var body: some View {
         ScrollView {
@@ -16,7 +17,9 @@ struct TargetDetailView: View {
                                   windowStart: store.windowStart,
                                   step: store.step,
                                   now: store.now,
-                                  minAlt: store.settings.minAlt)
+                                  minAlt: store.settings.minAlt,
+                                  darkStart: store.darkStart,
+                                  darkEnd: store.darkEnd)
                 framingSection
                     .padding(14)
                     .glassPanel()
@@ -27,6 +30,9 @@ struct TargetDetailView: View {
                     .padding(14)
                     .glassPanel()
                 bestNightSection
+                    .padding(14)
+                    .glassPanel()
+                sessionSection
                     .padding(14)
                     .glassPanel()
                 copyButtons
@@ -113,9 +119,39 @@ struct TargetDetailView: View {
                         "\(Fmt.deg(store.altNow(for: target))) alt · \(Fmt.deg(store.azNow(for: target))) az")
                 factRow("Dark window", darkWindowText)
                 factRow("Dark time above min", Fmt.hours(target.darkHoursAbove))
+                factRow("Imaging window", imagingWindowText)
+                factRow("Window status", imagingWindowStatus)
                 factRow("Field rotation at peak", fieldRotationText)
             }
         }
+    }
+
+    /// Best contiguous stretch where the target is above the minimum
+    /// altitude AND the Sun is below −18° (astronomical dark).
+    private var imagingWindow: Planning.ImagingWindow? {
+        Planning.imagingWindow(object: target.object,
+                               lat: store.settings.lat, lon: store.settings.lon,
+                               minAlt: store.settings.minAlt,
+                               now: store.now)
+    }
+
+    private var imagingWindowText: String {
+        guard let w = imagingWindow else { return "—" }
+        return "\(Fmt.time.string(from: w.start)) → " +
+            "\(Fmt.time.string(from: w.end)) (\(Fmt.dur(w.durationHours)))"
+    }
+
+    private var imagingWindowStatus: String {
+        guard let w = imagingWindow else { return "no window tonight" }
+        let now = store.now
+        if now < w.start {
+            return "opens in \(Fmt.countdown(w.start.timeIntervalSince(now)))"
+        }
+        if now <= w.end {
+            return "open now · closes in " +
+                "\(Fmt.countdown(w.end.timeIntervalSince(now)))"
+        }
+        return "closed for tonight"
     }
 
     private var darkWindowText: String {
@@ -283,6 +319,12 @@ struct TargetDetailView: View {
         }
     }
 
+    // MARK: - Session log
+
+    private var sessionSection: some View {
+        SessionLogSection(targetID: target.object.id, sessions: sessions)
+    }
+
     // MARK: - Copy buttons
 
     private var copyButtons: some View {
@@ -334,6 +376,43 @@ struct TargetDetailView: View {
     }
 }
 
+// MARK: - Session log section
+
+/// "Mark as imaged" + optional notes for one target. The enclosing
+/// `TargetDetailView` content carries `.id(target.id)`, so this view (and
+/// its `notesDraft` state) is recreated whenever the selection changes.
+struct SessionLogSection: View {
+    let targetID: String
+    @ObservedObject var sessions: SessionStore
+    @State private var notesDraft = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Session log")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            if let entry = sessions.entry(for: targetID) {
+                Text("Imaged \(Fmt.dayMonth.string(from: entry.dateImaged)) ✓")
+                    .font(.callout)
+                    .foregroundStyle(.green)
+                TextField("Notes (optional)", text: $notesDraft, onCommit: {
+                    sessions.updateNotes(id: targetID, notes: notesDraft)
+                })
+                .textFieldStyle(.roundedBorder)
+                Button("Unmark as imaged") {
+                    sessions.unmark(id: targetID)
+                }
+                .buttonStyle(.link)
+            } else {
+                Button("Mark as imaged") {
+                    sessions.markImaged(id: targetID)
+                }
+            }
+        }
+        .onAppear { notesDraft = sessions.entry(for: targetID)?.notes ?? "" }
+    }
+}
+
 // MARK: - Framing canvas (sensor rect vs target, to scale)
 
 struct FramingCanvas: View {
@@ -376,6 +455,8 @@ struct AltitudeChartView: View {
     let step: TimeInterval
     let now: Date
     let minAlt: Double
+    let darkStart: Date?
+    let darkEnd: Date?
 
     /// Draw-in progress 0...1, animated on appear and on target change.
     @State private var drawProgress = 0.0
@@ -460,6 +541,21 @@ struct AltitudeChartView: View {
         minPath.addLine(to: CGPoint(x: size.width, y: y(minAlt)))
         ctx.stroke(minPath, with: .color(.orange.opacity(0.7)),
                    style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+
+        // Astronomical-dark band behind the curve: the part of the night
+        // where the target can actually be imaged dark-sky.
+        if let ds = darkStart, let de = darkEnd {
+            let n = Double(profile.count - 1)
+            let t0 = ds.timeIntervalSince(windowStart) / step
+            let t1 = de.timeIntervalSince(windowStart) / step
+            let x0 = size.width * min(max(t0, 0), n) / n
+            let x1 = size.width * min(max(t1, 0), n) / n
+            if x1 > x0 {
+                ctx.fill(Path(CGRect(x: x0, y: 0,
+                                     width: x1 - x0, height: size.height)),
+                         with: .color(.indigo.opacity(0.14)))
+            }
+        }
 
         // Altitude curve (drawn in) + fill down to the horizon.
         var curve = Path()

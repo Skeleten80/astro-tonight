@@ -74,7 +74,28 @@ location button.
 - **AstroCapture export** — "Copy scheduler YAML" (toolbar: the whole
   listed set; detail: the single target) produces a `targets:` block
   for your plan YAML — names resolve through the catalogue and the
-  app's ranking carries over as `priority`.
+  app's ranking carries over as `priority`. With the observing-list
+  filter on, **Export night plan** copies the whole starred list as one
+  multi-target `targets:` block for a full night's run.
+- **Imaging window** — each detail view shows the best contiguous
+  stretch where the target is both above your minimum altitude *and*
+  the sky is astronomically dark ("21:42 → 03:15 (5.5 h)"), with a live
+  status: "opens in 2h 14m" / "open now · closes in 3h 05m" / "closed
+  for tonight".
+- **Night-vision mode** — toolbar toggle lays a non-interactive red
+  multiply layer over the whole app so it doesn't ruin your dark
+  adaptation at the scope. Persisted between launches. (v1 is an
+  overlay, not a full theme swap.)
+- **Session log** — "Mark as imaged" in the detail view, with optional
+  notes; imaged targets get a green "✓ Oct 3" badge in the list, and a
+  "Hide imaged" toggle filters them out. Saved between launches.
+- **Cloud cover** — the sidebar shows an Open-Meteo forecast strip
+  (current hour + next 6, colour-coded) next to the dark-hours line.
+  Free, no API key — but it needs internet, and it's a forecast, not a
+  measurement.
+- **Dark shading on the altitude chart** — the astronomically dark
+  interval is shaded behind the altitude curve, so you can see at a
+  glance when the target is both up and the sky is dark.
 - **Site settings** — latitude/longitude steppers (default Stratford,
   ON), or **Use my location** to set the site from the Mac's location
   services (needs the bundled `.app`, see above); minimum-altitude slider
@@ -110,8 +131,13 @@ the detail view crossfades between targets.
   removes it at the scope.
 - The Moon model is **low precision (~±1°)** — plenty for a
   separation verdict, not for ephemeris work.
-- The ranking is geometric only: it doesn't know about clouds, your
-  horizon obstructions, or the neighbour's porch light.
+- The ranking is geometric only: it doesn't know about your horizon
+  obstructions or the neighbour's porch light. The cloud strip is an
+  Open-Meteo **forecast**, not a measurement — look up before you haul
+  the scope out.
+- Night-vision mode is a **v1 overlay** (red multiply layer), not a
+  full red theme — bright white text still shows through dimmed and
+  reddened, so keep the screen brightness low at the scope.
 - Written against the macOS 14 SDK. Like the other Xcode targets in this
   workspace, it **has not been compile-checked on Linux** (there is no
   Swift toolchain on the build VM, and SwiftUI is macOS-only) — Xcode on
