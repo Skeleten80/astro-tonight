@@ -1,0 +1,528 @@
+import AppKit
+import SwiftUI
+
+struct TargetDetailView: View {
+    let target: RankedTarget
+    @ObservedObject var store: TargetStore
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                tonightSection
+                    .padding(14)
+                    .glassPanel()
+                AltitudeChartView(target: target,
+                                  windowStart: store.windowStart,
+                                  step: store.step,
+                                  now: store.now,
+                                  minAlt: store.settings.minAlt)
+                framingSection
+                    .padding(14)
+                    .glassPanel()
+                targetSection
+                    .padding(14)
+                    .glassPanel()
+                moonSection
+                    .padding(14)
+                    .glassPanel()
+                bestNightSection
+                    .padding(14)
+                    .glassPanel()
+                copyButtons
+            }
+            .padding(20)
+            .frame(maxWidth: 680, alignment: .leading)
+            .id(target.id)
+            .transition(.opacity)
+        }
+        .navigationTitle(target.object.name)
+        .animation(.easeInOut(duration: 0.22), value: target.id)
+    }
+
+    // MARK: - Header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(target.object.name)
+                    .font(.largeTitle)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(LinearGradient(
+                        colors: [.white, .white.opacity(0.72)],
+                        startPoint: .top, endPoint: .bottom))
+                Spacer()
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.55)) {
+                        store.toggleSaved(id: target.object.id)
+                    }
+                } label: {
+                    let saved = store.savedIDs.contains(target.object.id)
+                    Image(systemName: saved ? "star.fill" : "star")
+                        .symbolEffect(.bounce, value: saved)
+                        .foregroundStyle(saved ? .yellow : .secondary)
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .help("Toggle observing list")
+                if let rank = store.targets.firstIndex(of: target) {
+                    Text("#\(rank + 1) tonight")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            Text(target.object.ids.joined(separator: " · "))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            HStack(spacing: 8) {
+                kindChip
+                if let c = target.object.constellation {
+                    Text(c).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var kindChip: some View {
+        Text(ObjectKind.of(target.object.type).rawValue)
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(.blue.opacity(0.15))
+            .foregroundStyle(.blue)
+            .clipShape(Capsule())
+    }
+
+    // MARK: - Tonight
+
+    private var tonightSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Tonight")
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                factRow("Peak altitude",
+                        "\(Fmt.deg(target.peakAlt)) at \(Fmt.time.string(from: target.peakTime))")
+                factRow("Above \(Fmt.deg(store.settings.minAlt))",
+                        Fmt.hours(target.hoursAbove))
+                factRow("Rises above min",
+                        target.rise.map { Fmt.time.string(from: $0) } ?? "—")
+                factRow("Sets below min",
+                        target.set.map { Fmt.time.string(from: $0) } ?? "—")
+                factRow("Right now",
+                        "\(Fmt.deg(store.altNow(for: target))) alt · \(Fmt.deg(store.azNow(for: target))) az")
+                factRow("Dark window", darkWindowText)
+                factRow("Dark time above min", Fmt.hours(target.darkHoursAbove))
+                factRow("Field rotation at peak", fieldRotationText)
+            }
+        }
+    }
+
+    private var darkWindowText: String {
+        if let ds = store.darkStart, let de = store.darkEnd {
+            return "\(Fmt.time.string(from: ds)) → \(Fmt.time.string(from: de))"
+        }
+        return "—"
+    }
+
+    /// Alt-az field rotation at the target's peak, plus the estimated star
+    /// trailing at the frame corners in a 30 s sub. Centre of frame is
+    /// unaffected; it grows linearly toward the corners.
+    private var fieldRotationText: String {
+        let aa = AstroMath.altAz(ra: target.object.ra, dec: target.object.dec,
+                                 julianDate: AstroMath.julianDate(target.peakTime),
+                                 lat: store.settings.lat, lon: store.settings.lon)
+        let rate = AstroMath.fieldRotationRateDegPerHour(
+            alt: aa.alt, az: aa.az, lat: store.settings.lat)
+        guard rate.isFinite else { return "extreme — passes near the zenith" }
+        let rotatedDeg = abs(rate) / 3600 * 30
+        let arcSec = rotatedDeg * .pi / 180 * Rig.cornerRadiusDeg * 3600
+        let px = arcSec / Rig.pixelScaleArcsecPerPx
+        return String(format: "≈ %.0f°/hr · ~%.0f px corner trailing in 30 s",
+                      abs(rate), px)
+    }
+
+    // MARK: - Framing (fits my rig?)
+
+    private var framingSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Framing · T7i + 6SE")
+            HStack(alignment: .top, spacing: 16) {
+                FramingCanvas(sizeArcmin: target.object.sizeArcmin)
+                    .frame(width: 220, height: 150)
+                VStack(alignment: .leading, spacing: 6) {
+                    framingBadge
+                    Text(String(format: "Frame %.2f° × %.2f° · %.1f″/px",
+                                Rig.fieldWidthDeg, Rig.fieldHeightDeg,
+                                Rig.pixelScaleArcsecPerPx))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    if let s = target.object.sizeArcmin {
+                        Text(String(format: "Target ≈ %.1f′ across", s))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+            }
+            Text("Assumes the stock 1500 mm f/10. With the f/6.3 reducer " +
+                 "the frame is ~1.6× wider.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var framingBadge: some View {
+        let (text, color): (String, Color)
+        switch Rig.framing(sizeArcmin: target.object.sizeArcmin) {
+        case .unknown: text = "size unknown"; color = .gray
+        case .small: text = "small in frame"; color = .blue
+        case .fits: text = "fits with room"; color = .green
+        case .fills: text = "fills the frame"; color = .green
+        case .tight: text = "tight — consider a mosaic"; color = .orange
+        case .mosaic: text = "mosaic target"; color = .orange
+        }
+        return Text(text)
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.15))
+            .foregroundStyle(color)
+            .clipShape(Capsule())
+    }
+
+    // MARK: - Target facts
+
+    private var targetSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Target · J2000")
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                factRow("RA",
+                        "\(AstroMath.raToHMS(target.object.ra))  (\(String(format: "%.4f°", target.object.ra)))")
+                factRow("Dec",
+                        "\(AstroMath.decToDMS(target.object.dec))  (\(String(format: "%.4f°", target.object.dec)))")
+                factRow("Magnitude", Fmt.mag(target.object.mag))
+                factRow("Size", target.object.sizeArcmin.map { String(format: "%.1f′", $0) } ?? "—")
+                factRow("Type", target.object.type.replacingOccurrences(of: "_", with: " "))
+            }
+            Text("Coordinates are J2000 mean place (catalogue frame) — about ±0.5° from tonight's apparent place. Fine for GoTo; plate solving removes the rest.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Moon
+
+    private var moonSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Moon")
+            HStack(spacing: 10) {
+                Text("Separation \(Fmt.deg(target.moonSep))")
+                Spacer()
+                moonVerdict
+            }
+            .font(.callout)
+            Text("Rule of thumb: with the Moon more than half lit, keep 40° or more away from it for broadband imaging; narrowband doesn't care.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var moonVerdict: some View {
+        let ok = target.moonOK
+        return Text(ok ? "Moon OK" : "Moon glare risk")
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background((ok ? Color.green : Color.orange).opacity(0.15))
+            .foregroundStyle(ok ? .green : .orange)
+            .clipShape(Capsule())
+    }
+
+    // MARK: - Best night this week
+
+    private var bestNightSection: some View {
+        let scores = Planning.weekScores(object: target.object,
+                                         lat: store.settings.lat,
+                                         lon: store.settings.lon,
+                                         now: store.now)
+        let best = Planning.bestNight(scores)
+        return VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Best night this week")
+            if let best {
+                Text("\(Fmt.weekday.string(from: best.date)) — peak " +
+                     "\(Fmt.deg(best.peakAlt)) at " +
+                     "\(Fmt.time.string(from: best.peakTime)), moon " +
+                     "\(Int(best.moonIllumination * 100))%")
+                    .font(.callout)
+                    .monospacedDigit()
+            }
+            HStack(spacing: 6) {
+                ForEach(scores, id: \.date) { s in
+                    VStack(spacing: 2) {
+                        Text(Fmt.weekdayNarrow.string(from: s.date))
+                        Text("\(Int(s.peakAlt))°")
+                        Text("\(Int(s.moonIllumination * 100))%")
+                            .foregroundStyle(s.moonOK ? .green : .orange)
+                    }
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+                    .background(s.date == best?.date
+                                ? Color.accentColor.opacity(0.18)
+                                : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            Text("Ranked moon-clear first, then highest peak. " +
+                 "Green % = moon is dim or well away from the target.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Copy buttons
+
+    private var copyButtons: some View {
+        HStack(spacing: 12) {
+            Button("Copy coordinates") {
+                copyToClipboard(
+                    "\(target.object.name): RA \(String(format: "%.5f", target.object.ra))°, " +
+                    "Dec \(String(format: "%+.5f", target.object.dec))° (J2000)")
+            }
+            Button("Copy scheduler YAML") {
+                copyToClipboard(Planning.schedulerYAML(
+                    targets: [target],
+                    lat: store.settings.lat, lon: store.settings.lon,
+                    minAlt: store.settings.minAlt,
+                    date: store.now))
+            }
+            Button("Copy for NexStar hand controller") {
+                copyToClipboard(
+                    "\(AstroMath.raToHMS(target.object.ra))  \(AstroMath.decToDMS(target.object.dec))")
+            }
+            .buttonStyle(.link)
+        }
+    }
+
+    // MARK: - Pieces
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.headline)
+            .foregroundStyle(.secondary)
+    }
+
+    private func factRow(_ label: String, _ value: String) -> some View {
+        GridRow {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .monospacedDigit()
+                .textSelection(.enabled)
+                .gridColumnAlignment(.leading)
+        }
+        .font(.callout)
+    }
+
+    private func copyToClipboard(_ s: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(s, forType: .string)
+    }
+}
+
+// MARK: - Framing canvas (sensor rect vs target, to scale)
+
+struct FramingCanvas: View {
+    let sizeArcmin: Double?
+
+    var body: some View {
+        Canvas { ctx, size in
+            let w = Rig.fieldWidthDeg
+            let targetD = (sizeArcmin ?? 0) / 60.0
+            let span = max(w, targetD) * 1.15
+            let s = size.width / span
+            let fw = w * s
+            let fh = Rig.fieldHeightDeg * s
+            let frame = CGRect(x: (size.width - fw) / 2,
+                               y: (size.height - fh) / 2,
+                               width: fw, height: fh)
+            ctx.stroke(Path(frame), with: .color(.accentColor), lineWidth: 1.5)
+            if let sa = sizeArcmin {
+                let r = sa / 60.0 / 2 * s
+                let c = CGPoint(x: size.width / 2, y: size.height / 2)
+                ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r,
+                                                 width: 2 * r, height: 2 * r)),
+                           with: .color(.green), lineWidth: 1.5)
+            } else {
+                ctx.draw(Text("?")
+                    .font(.title)
+                    .foregroundStyle(.secondary),
+                         at: CGPoint(x: size.width / 2, y: size.height / 2))
+            }
+        }
+        .glassPanel(radius: 8)
+    }
+}
+
+// MARK: - Altitude chart
+
+struct AltitudeChartView: View {
+    let target: RankedTarget
+    let windowStart: Date
+    let step: TimeInterval
+    let now: Date
+    let minAlt: Double
+
+    /// Draw-in progress 0...1, animated on appear and on target change.
+    @State private var drawProgress = 0.0
+    /// Hover/drag scrubber x in points, nil when the pointer leaves.
+    @State private var hoverX: CGFloat? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Altitude · 24 h window")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            GeometryReader { geo in
+                Canvas { ctx, size in
+                    draw(in: ctx, size: size)
+                }
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let location): hoverX = location.x
+                    case .ended: hoverX = nil
+                    }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { hoverX = $0.location.x }
+                        .onEnded { _ in hoverX = nil }
+                )
+            }
+            .frame(height: 170)
+            .glassPanel(radius: 10)
+            .onAppear { animateIn() }
+            .onChange(of: target.id) { _, _ in animateIn() }
+            HStack {
+                Text(Fmt.dayTime.string(from: windowStart))
+                Spacer()
+                Text("now")
+                Spacer()
+                Text(Fmt.dayTime.string(from: windowStart.addingTimeInterval(step * Double(max(target.profile.count - 1, 0)))))
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func animateIn() {
+        drawProgress = 0
+        withAnimation(.easeOut(duration: 1.3)) { drawProgress = 1 }
+    }
+
+    /// Altitude at a fractional profile position by linear interpolation.
+    private func altAt(_ t: Double) -> Double {
+        let p = target.profile
+        guard p.count > 1 else { return -90 }
+        let tc = min(max(t, 0), Double(p.count - 1))
+        let i = Int(tc)
+        let f = tc - Double(i)
+        return p[i] * (1 - f) + p[min(i + 1, p.count - 1)] * f
+    }
+
+    private func draw(in ctx: GraphicsContext, size: CGSize) {
+        let profile = target.profile
+        guard profile.count > 1 else { return }
+        let yMin = -15.0, yMax = 90.0
+        let shown = max(2, Int(Double(profile.count) * drawProgress))
+
+        func x(_ i: Int) -> Double {
+            size.width * Double(i) / Double(profile.count - 1)
+        }
+        func y(_ alt: Double) -> Double {
+            let f = (alt - yMin) / (yMax - yMin)
+            return size.height * (1.0 - f)
+        }
+
+        // Horizon line.
+        var horizon = Path()
+        horizon.move(to: CGPoint(x: 0, y: y(0)))
+        horizon.addLine(to: CGPoint(x: size.width, y: y(0)))
+        ctx.stroke(horizon, with: .color(.gray.opacity(0.5)), lineWidth: 1)
+
+        // Minimum-altitude line.
+        var minPath = Path()
+        minPath.move(to: CGPoint(x: 0, y: y(minAlt)))
+        minPath.addLine(to: CGPoint(x: size.width, y: y(minAlt)))
+        ctx.stroke(minPath, with: .color(.orange.opacity(0.7)),
+                   style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+
+        // Altitude curve (drawn in) + fill down to the horizon.
+        var curve = Path()
+        curve.move(to: CGPoint(x: x(0), y: y(profile[0])))
+        for i in 1..<shown {
+            curve.addLine(to: CGPoint(x: x(i), y: y(profile[i])))
+        }
+        var fill = Path(curve)
+        fill.addLine(to: CGPoint(x: x(shown - 1), y: y(0)))
+        fill.addLine(to: CGPoint(x: x(0), y: y(0)))
+        fill.closeSubpath()
+        ctx.fill(fill, with: .color(.accentColor.opacity(0.15 * drawProgress)))
+        ctx.stroke(curve, with: .linearGradient(
+            Gradient(colors: [.accentColor, .purple]),
+            startPoint: .zero,
+            endPoint: CGPoint(x: size.width, y: 0)), lineWidth: 2)
+
+        // Peak marker.
+        if drawProgress > 0.95,
+           let peakIdx = profile.indices.max(by: { profile[$0] < profile[$1] })
+        {
+            let c = CGPoint(x: x(peakIdx), y: y(profile[peakIdx]))
+            ctx.fill(Path(ellipseIn: CGRect(x: c.x - 7, y: c.y - 7,
+                                            width: 14, height: 14)),
+                     with: .color(.accentColor.opacity(0.25)))
+            ctx.fill(Path(ellipseIn: CGRect(x: c.x - 4, y: c.y - 4,
+                                            width: 8, height: 8)),
+                     with: .color(.accentColor))
+        }
+
+        // Now line.
+        let t = now.timeIntervalSince(windowStart) / step
+        if t >= 0 && t <= Double(profile.count - 1) {
+            let nx = size.width * t / Double(profile.count - 1)
+            var nowLine = Path()
+            nowLine.move(to: CGPoint(x: nx, y: 0))
+            nowLine.addLine(to: CGPoint(x: nx, y: size.height))
+            ctx.stroke(nowLine, with: .color(.white.opacity(0.6)), lineWidth: 1)
+        }
+
+        // Hover scrubber: readout of time + altitude under the pointer.
+        if let hx = hoverX {
+            let xc = min(max(hx, 0), size.width)
+            let tp = xc / size.width * Double(profile.count - 1)
+            let alt = altAt(tp)
+            var line = Path()
+            line.move(to: CGPoint(x: xc, y: 0))
+            line.addLine(to: CGPoint(x: xc, y: size.height))
+            ctx.stroke(line, with: .color(.white.opacity(0.45)), lineWidth: 1)
+            let dot = CGPoint(x: xc, y: y(alt))
+            ctx.fill(Path(ellipseIn: CGRect(x: dot.x - 4, y: dot.y - 4,
+                                            width: 8, height: 8)),
+                     with: .color(.white))
+            let date = windowStart.addingTimeInterval(tp * step)
+            let label = Text("\(Fmt.time.string(from: date)) · \(Fmt.deg(alt))")
+                .font(.caption)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(.ultraThinMaterial,
+                            in: RoundedRectangle(cornerRadius: 6))
+            ctx.draw(label, at: CGPoint(x: min(max(xc, 70), size.width - 70),
+                                       y: 14))
+        }
+    }
+}
