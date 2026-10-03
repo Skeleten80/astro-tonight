@@ -102,44 +102,23 @@ struct SiteSettings: Codable {
     }
 }
 
-// MARK: - The rig (for the fits-my-frame check)
+// MARK: - Sort mode (list ordering)
 
-/// Mathias's imaging rig: stock Celestron NexStar 6SE (1500 mm f/10) +
-/// Canon EOS Rebel T7i (APS-C 22.3 × 14.9 mm, 3.72 µm pixels).
-enum Rig {
-    static let focalLengthMM = 1500.0
-    static let sensorWidthMM = 22.3
-    static let sensorHeightMM = 14.9
-    static let pixelMicrons = 3.72
+enum SortMode: String, CaseIterable, Identifiable {
+    case rank
+    case peakTime
+    case windowOpens
+    case name
 
-    static var fieldWidthDeg: Double {
-        2 * atan(sensorWidthMM / 2 / focalLengthMM) * AstroMath.rad2deg
-    }
-    static var fieldHeightDeg: Double {
-        2 * atan(sensorHeightMM / 2 / focalLengthMM) * AstroMath.rad2deg
-    }
-    static var pixelScaleArcsecPerPx: Double {
-        206.265 * pixelMicrons / focalLengthMM
-    }
-    /// Half the frame diagonal — worst-case distance from field centre.
-    static var cornerRadiusDeg: Double {
-        hypot(fieldWidthDeg, fieldHeightDeg) / 2
-    }
+    var id: String { rawValue }
 
-    enum Framing {
-        case unknown, small, fits, fills, tight, mosaic
-    }
-
-    /// How the target's catalogued size compares to the T7i frame.
-    static func framing(sizeArcmin: Double?) -> Framing {
-        guard let s = sizeArcmin else { return .unknown }
-        let d = s / 60.0
-        let w = fieldWidthDeg
-        if d < 0.30 * w { return .small }
-        if d < 0.90 * w { return .fits }
-        if d < 1.05 * w { return .fills }
-        if d < 1.60 * w { return .tight }
-        return .mosaic
+    var label: String {
+        switch self {
+        case .rank: return "Rank"
+        case .peakTime: return "Peak"
+        case .windowOpens: return "Window"
+        case .name: return "A–Z"
+        }
     }
 }
 

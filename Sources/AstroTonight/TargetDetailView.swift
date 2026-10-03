@@ -5,6 +5,7 @@ struct TargetDetailView: View {
     let target: RankedTarget
     @ObservedObject var store: TargetStore
     @ObservedObject var sessions: SessionStore
+    let rig: RigPreset
 
     var body: some View {
         ScrollView {
@@ -17,7 +18,7 @@ struct TargetDetailView: View {
                                   windowStart: store.windowStart,
                                   step: store.step,
                                   now: store.now,
-                                  minAlt: store.settings.minAlt,
+                                  minThresholds: horizonThresholds,
                                   darkStart: store.darkStart,
                                   darkEnd: store.darkEnd)
                 framingSection
@@ -109,7 +110,9 @@ struct TargetDetailView: View {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
                 factRow("Peak altitude",
                         "\(Fmt.deg(target.peakAlt)) at \(Fmt.time.string(from: target.peakTime))")
-                factRow("Above \(Fmt.deg(store.settings.minAlt))",
+                factRow(store.horizonProfile.isEmpty
+                            ? "Above \(Fmt.deg(store.settings.minAlt))"
+                            : "Above horizon",
                         Fmt.hours(target.hoursAbove))
                 factRow("Rises above min",
                         target.rise.map { Fmt.time.string(from: $0) } ?? "—")
@@ -132,7 +135,25 @@ struct TargetDetailView: View {
         Planning.imagingWindow(object: target.object,
                                lat: store.settings.lat, lon: store.settings.lon,
                                minAlt: store.settings.minAlt,
-                               now: store.now)
+                               now: store.now,
+                               horizon: store.horizonProfile)
+    }
+
+    /// Per-step minimum altitude for the chart's threshold line: the
+    /// surveyed horizon traced over the night, or the flat minimum when
+    /// no profile is surveyed (identical rendering to before).
+    private var horizonThresholds: [Double] {
+        let n = target.profile.count
+        return (0..<n).map { i in
+            let t = store.windowStart.addingTimeInterval(Double(i) * store.step)
+            let jd = AstroMath.julianDate(t)
+            let az = AstroMath.altAz(ra: target.object.ra, dec: target.object.dec,
+                                     julianDate: jd,
+                                     lat: store.settings.lat,
+                                     lon: store.settings.lon).az
+            return store.horizonProfile.minAlt(forAzimuth: az)
+                ?? store.settings.minAlt
+        }
     }
 
     private var imagingWindowText: String {
@@ -172,8 +193,8 @@ struct TargetDetailView: View {
             alt: aa.alt, az: aa.az, lat: store.settings.lat)
         guard rate.isFinite else { return "extreme — passes near the zenith" }
         let rotatedDeg = abs(rate) / 3600 * 30
-        let arcSec = rotatedDeg * .pi / 180 * Rig.cornerRadiusDeg * 3600
-        let px = arcSec / Rig.pixelScaleArcsecPerPx
+        let arcSec = rotatedDeg * .pi / 180 * rig.cornerRadiusDeg * 3600
+        let px = arcSec / rig.pixelScaleArcsecPerPx
         return String(format: "≈ %.0f°/hr · ~%.0f px corner trailing in 30 s",
                       abs(rate), px)
     }
@@ -182,15 +203,13 @@ struct TargetDetailView: View {
 
     private var framingSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("Framing · T7i + 6SE")
+            sectionHeader("Framing · \(rig.name)")
             HStack(alignment: .top, spacing: 16) {
-                FramingCanvas(sizeArcmin: target.object.sizeArcmin)
+                FramingCanvas(sizeArcmin: target.object.sizeArcmin, rig: rig)
                     .frame(width: 220, height: 150)
                 VStack(alignment: .leading, spacing: 6) {
                     framingBadge
-                    Text(String(format: "Frame %.2f° × %.2f° · %.1f″/px",
-                                Rig.fieldWidthDeg, Rig.fieldHeightDeg,
-                                Rig.pixelScaleArcsecPerPx))
+                    Text(rig.specLine)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -202,8 +221,8 @@ struct TargetDetailView: View {
                     }
                 }
             }
-            Text("Assumes the stock 1500 mm f/10. With the f/6.3 reducer " +
-                 "the frame is ~1.6× wider.")
+            Text("Frame vs target, to scale, for the selected rig. " +
+                 "Change rigs in Site settings.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -211,7 +230,7 @@ struct TargetDetailView: View {
 
     private var framingBadge: some View {
         let (text, color): (String, Color)
-        switch Rig.framing(sizeArcmin: target.object.sizeArcmin) {
+        switch rig.framing(sizeArcmin: target.object.sizeArcmin) {
         case .unknown: text = "size unknown"; color = .gray
         case .small: text = "small in frame"; color = .blue
         case .fits: text = "fits with room"; color = .green
@@ -417,15 +436,16 @@ struct SessionLogSection: View {
 
 struct FramingCanvas: View {
     let sizeArcmin: Double?
+    let rig: RigPreset
 
     var body: some View {
         Canvas { ctx, size in
-            let w = Rig.fieldWidthDeg
+            let w = rig.fieldWidthDeg
             let targetD = (sizeArcmin ?? 0) / 60.0
             let span = max(w, targetD) * 1.15
             let s = size.width / span
             let fw = w * s
-            let fh = Rig.fieldHeightDeg * s
+            let fh = rig.fieldHeightDeg * s
             let frame = CGRect(x: (size.width - fw) / 2,
                                y: (size.height - fh) / 2,
                                width: fw, height: fh)
@@ -454,7 +474,9 @@ struct AltitudeChartView: View {
     let windowStart: Date
     let step: TimeInterval
     let now: Date
-    let minAlt: Double
+    /// Per-step minimum altitude: the surveyed horizon traced over the
+    /// night, or the flat minimum repeated when no profile is surveyed.
+    let minThresholds: [Double]
     let darkStart: Date?
     let darkEnd: Date?
 
@@ -517,7 +539,8 @@ struct AltitudeChartView: View {
 
     private func draw(in ctx: GraphicsContext, size: CGSize) {
         let profile = target.profile
-        guard profile.count > 1 else { return }
+        guard profile.count > 1,
+              minThresholds.count == profile.count else { return }
         let yMin = -15.0, yMax = 90.0
         let shown = max(2, Int(Double(profile.count) * drawProgress))
 
@@ -535,10 +558,13 @@ struct AltitudeChartView: View {
         horizon.addLine(to: CGPoint(x: size.width, y: y(0)))
         ctx.stroke(horizon, with: .color(.gray.opacity(0.5)), lineWidth: 1)
 
-        // Minimum-altitude line.
+        // Minimum-altitude line: flat when no horizon is surveyed,
+        // otherwise the surveyed profile traced over the night.
         var minPath = Path()
-        minPath.move(to: CGPoint(x: 0, y: y(minAlt)))
-        minPath.addLine(to: CGPoint(x: size.width, y: y(minAlt)))
+        minPath.move(to: CGPoint(x: 0, y: y(minThresholds[0])))
+        for i in 1..<profile.count {
+            minPath.addLine(to: CGPoint(x: x(i), y: y(minThresholds[i])))
+        }
         ctx.stroke(minPath, with: .color(.orange.opacity(0.7)),
                    style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
 

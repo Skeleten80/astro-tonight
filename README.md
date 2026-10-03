@@ -56,10 +56,11 @@ location button.
   NexStar).
 - **Moon awareness** — illumination % and waxing/waning in the toolbar,
   per-target moon separation, and a "Moon OK / glare risk" verdict.
-- **Fits-my-rig framing** — each target is checked against your actual
-  rig (T7i + stock 6SE at 1500 mm f/10: 0.85° × 0.57° field, 0.51″/px):
-  a badge (fits with room / fills the frame / tight / mosaic target)
-  plus a to-scale diagram of the sensor rectangle vs the target.
+- **Fits-my-rig framing** — each target is checked against your selected
+  rig preset (default T7i + stock 6SE at 1500 mm f/10: 0.85° × 0.57°
+  field, 0.51″/px; f/6.3-reducer preset and customs available in Site
+  settings): a badge (fits with room / fills the frame / tight / mosaic
+  target) plus a to-scale diagram of the sensor rectangle vs the target.
 - **Dark hours** — astronomical dusk → dawn (Sun below −18°) for your
   site in the sidebar, per-target "dark time above minimum", and the
   24 h altitude chart keeps its minimum-altitude line.
@@ -96,6 +97,32 @@ location button.
 - **Dark shading on the altitude chart** — the astronomically dark
   interval is shaded behind the altitude curve, so you can see at a
   glance when the target is both up and the sky is dark.
+- **"Image this now" top pick** — a hero card at the top of the list
+  fusing rank, open imaging window, cloud cover, and the moon verdict
+  into one recommendation (tapping it jumps to the target). When nothing
+  is imageable right now it names the next upcoming window instead. The
+  score is a documented heuristic, not a measurement.
+- **Horizon profile** — survey your real horizon in Site settings
+  (azimuth/altitude points with steppers, interpolated around the
+  compass) and the ranking, imaging windows, and "up now" badges all
+  respect your trees and roofline instead of a flat minimum. The altitude
+  chart's threshold line traces the surveyed profile too. Empty profile =
+  the old flat behaviour, byte-identical to `astrocapture tonight`.
+- **Rig presets** — the framing check is no longer hardcoded: pick
+  "6SE + T7i (f/10)" (the default), "6SE + T7i + f/6.3 reducer"
+  (945 mm → 1.35° × 0.90°, 0.81″/px, derived not hardcoded), or add your
+  own custom rigs (name + focal length/ratio + sensor size + pixel size)
+  in Site settings. Built-ins can't be deleted; customs can.
+- **Sort options** — Rank (the default, exactly the ranker's order),
+  Peak time, Window opens, or A–Z, next to the type filter.
+- **Moon strip on the 7-day view** — each night in the best-night strip
+  already shows its moon illumination % (green = dim or well away).
+- **Field-ready observing plan** — "Copy observing plan" copies a
+  Markdown plan for tonight: site, dark window, moon, horizon, rig,
+  cloud summary, then per target the imaging window, peak, moon
+  separation + verdict, framing vs the selected rig, and imaged ✓
+  status. Uses the observing list when it's non-empty, otherwise the top
+  20 ranked — stated in the output.
 - **Site settings** — latitude/longitude steppers (default Stratford,
   ON), or **Use my location** to set the site from the Mac's location
   services (needs the bundled `.app`, see above); minimum-altitude slider
@@ -131,10 +158,17 @@ the detail view crossfades between targets.
   removes it at the scope.
 - The Moon model is **low precision (~±1°)** — plenty for a
   separation verdict, not for ephemeris work.
-- The ranking is geometric only: it doesn't know about your horizon
-  obstructions or the neighbour's porch light. The cloud strip is an
-  Open-Meteo **forecast**, not a measurement — look up before you haul
-  the scope out.
+- The ranking is geometric only: with no horizon surveyed it doesn't
+  know about your horizon obstructions (survey them in Site settings) or
+  the neighbour's porch light. The cloud strip is an Open-Meteo
+  **forecast**, not a measurement — look up before you haul the scope
+  out.
+- The "image this now" top pick is a **heuristic score** (rank position +
+  window-open bonus + cloud penalty + moon penalty), documented in
+  `Planning.topPick`. It points at the detail view; the detail view has
+  the real numbers.
+- The horizon editor is **numeric** (azimuth/altitude steppers), not a
+  drawn skyline — stand where the scope sits and dial each point in.
 - Night-vision mode is a **v1 overlay** (red multiply layer), not a
   full red theme — bright white text still shows through dimmed and
   reddened, so keep the screen brightness low at the scope.

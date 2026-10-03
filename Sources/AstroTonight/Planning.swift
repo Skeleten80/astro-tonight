@@ -109,8 +109,9 @@ enum Planning {
 
     // MARK: - Imaging window
 
-    /// The best contiguous stretch where the target is above `minAlt`
-    /// AND the Sun is below −18° (astronomical dark).
+    /// The best contiguous stretch where the target is above the minimum
+    /// (surveyed horizon at the target's azimuth when one exists, else the
+    /// flat `minAlt`) AND the Sun is below −18° (astronomical dark).
     struct ImagingWindow: Hashable {
         let start: Date
         let end: Date
@@ -119,14 +120,15 @@ enum Planning {
 
     /// Samples target + Sun altitude every 10 min over the same
     /// −12 h..+24 h window the dark scan uses, keeps the samples that are
-    /// both above `minAlt` and in astronomical darkness, then picks the
+    /// both above the minimum and in astronomical darkness, then picks the
     /// best contiguous run: the longest run overlapping the next 12 h if
     /// any, otherwise the longest run overall. Nil when the target gets no
     /// dark-sky time above the minimum.
     static func imagingWindow(object: CatalogObject,
                               lat: Double, lon: Double,
                               minAlt: Double,
-                              now: Date) -> ImagingWindow?
+                              now: Date,
+                              horizon: HorizonProfile = .init()) -> ImagingWindow?
     {
         let step: TimeInterval = 600
         let t0 = now.addingTimeInterval(-12 * 3600)
@@ -139,14 +141,15 @@ enum Planning {
         for i in 0..<nSteps {
             let t = t0.addingTimeInterval(Double(i) * step)
             let jd = AstroMath.julianDate(t)
-            let alt = AstroMath.altAz(ra: object.ra, dec: object.dec,
-                                      julianDate: jd,
-                                      lat: lat, lon: lon).alt
+            let aa = AstroMath.altAz(ra: object.ra, dec: object.dec,
+                                     julianDate: jd,
+                                     lat: lat, lon: lon)
+            let threshold = horizon.minAlt(forAzimuth: aa.az) ?? minAlt
             let sun = AstroMath.sunRaDec(julianDate: jd)
             let sunAlt = AstroMath.altAz(ra: sun.ra, dec: sun.dec,
                                          julianDate: jd,
                                          lat: lat, lon: lon).alt
-            if alt >= minAlt && sunAlt <= -18.0 {
+            if aa.alt >= threshold && sunAlt <= -18.0 {
                 if runStart == nil { runStart = i }
                 prev = i
             } else if let rs = runStart {
@@ -157,11 +160,11 @@ enum Planning {
         if let rs = runStart { runs.append((rs, prev)) }
         guard !runs.isEmpty else { return nil }
 
-        let horizon = now.addingTimeInterval(12 * 3600)
+        let horizon12 = now.addingTimeInterval(12 * 3600)
         let overlapping = runs.filter { r in
             let s = t0.addingTimeInterval(Double(r.0) * step)
             let e = t0.addingTimeInterval(Double(r.1) * step)
-            return e >= now && s <= horizon
+            return e >= now && s <= horizon12
         }
         let candidates = overlapping.isEmpty ? runs : overlapping
         guard let best = candidates.max(by: { ($0.1 - $0.0) < ($1.1 - $1.0) })
@@ -169,6 +172,201 @@ enum Planning {
         return ImagingWindow(
             start: t0.addingTimeInterval(Double(best.0) * step),
             end: t0.addingTimeInterval(Double(best.1) * step))
+    }
+
+    // MARK: - Top pick ("image this now")
+
+    /// The heuristic answer to "what should I image right now".
+    ///
+    /// Score (higher is better) — deliberately simple and documented:
+    ///   base  = 100 − rank index              (the app's own ranking)
+    ///   + 50  if the imaging window is open right now
+    ///   + 25  if a window opens within the next 2 h
+    ///   − cloud cover % at the current hour   (forecast; no penalty if nil)
+    ///   − 30  if the Moon is a glare risk for this target
+    /// Targets with no imaging window tonight are skipped entirely.
+    /// This is a heuristic, not a measurement — the detail view carries
+    /// the real numbers behind it.
+    struct TopPick {
+        let target: RankedTarget
+        let window: ImagingWindow
+        let openNow: Bool
+        let cloudCover: Double?
+        let score: Double
+    }
+
+    static func topPick(ranked: [RankedTarget],
+                        lat: Double, lon: Double,
+                        horizon: HorizonProfile,
+                        minAlt: Double,
+                        now: Date,
+                        cloud: [WeatherService.HourSample]?) -> TopPick?
+    {
+        var best: TopPick? = nil
+        for (index, target) in ranked.enumerated() {
+            guard let window = imagingWindow(
+                object: target.object, lat: lat, lon: lon,
+                minAlt: minAlt, now: now, horizon: horizon)
+            else { continue }
+            let openNow = now >= window.start && now <= window.end
+            let opensSoon = !openNow && window.start > now &&
+                window.start.timeIntervalSince(now) <= 2 * 3600
+            let cover = cloud.flatMap { cloudCover(at: now, in: $0) }
+            var score = 100.0 - Double(index)
+            if openNow { score += 50 }
+            else if opensSoon { score += 25 }
+            if let c = cover { score -= c }
+            if !target.moonOK { score -= 30 }
+            let pick = TopPick(target: target, window: window,
+                               openNow: openNow, cloudCover: cover,
+                               score: score)
+            if best == nil || pick.score > best!.score { best = pick }
+        }
+        return best
+    }
+
+    /// Soonest imaging window starting after `now` — for the "nothing
+    /// imageable right now" empty state.
+    static func nextUpcomingWindow(ranked: [RankedTarget],
+                                   lat: Double, lon: Double,
+                                   horizon: HorizonProfile,
+                                   minAlt: Double,
+                                   now: Date)
+        -> (target: RankedTarget, window: ImagingWindow)?
+    {
+        var best: (RankedTarget, ImagingWindow)? = nil
+        for target in ranked {
+            guard let window = imagingWindow(
+                object: target.object, lat: lat, lon: lon,
+                minAlt: minAlt, now: now, horizon: horizon),
+                window.start > now
+            else { continue }
+            if best == nil || window.start < best!.1.start {
+                best = (target, window)
+            }
+        }
+        return best
+    }
+
+    /// Cloud cover % at the hour containing `date`, from cached forecast
+    /// samples; nil when no sample is within 90 minutes.
+    static func cloudCover(at date: Date,
+                           in samples: [WeatherService.HourSample]) -> Double?
+    {
+        let nearest = samples.min(by: {
+            abs($0.date.timeIntervalSince(date))
+                < abs($1.date.timeIntervalSince(date))
+        })
+        guard let n = nearest,
+              abs(n.date.timeIntervalSince(date)) <= 5400
+        else { return nil }
+        return n.cover
+    }
+
+    // MARK: - Field-ready observing plan (Markdown)
+
+    /// A Markdown observing plan for tonight, ready to copy into notes or
+    /// print for the field. Uses the observing list when it's non-empty,
+    /// otherwise the top 20 ranked targets — stated in the output.
+    static func observingPlanText(
+        savedIDs: Set<String>,
+        ranked: [RankedTarget],
+        lat: Double, lon: Double,
+        siteLabel: String,
+        minAlt: Double,
+        horizon: HorizonProfile,
+        darkStart: Date?,
+        darkEnd: Date?,
+        cloud: [WeatherService.HourSample]?,
+        moonIllumination: Double,
+        waxing: Bool,
+        rig: RigPreset,
+        imagedIDs: Set<String>,
+        now: Date) -> String
+    {
+        let usingList = !savedIDs.isEmpty
+        let list = usingList
+            ? ranked.filter { savedIDs.contains($0.id) }
+            : Array(ranked.prefix(20))
+        var lines = [String]()
+        lines.append("# Observing plan — \(Fmt.weekday.string(from: now))")
+        lines.append("")
+        lines.append("Site: \(siteLabel) " +
+                     "(\(String(format: "%.4f, %.4f", lat, lon)))")
+        if let ds = darkStart, let de = darkEnd {
+            lines.append("Dark: \(Fmt.time.string(from: ds)) → " +
+                         "\(Fmt.time.string(from: de)) " +
+                         "(\(Fmt.dur(de.timeIntervalSince(ds) / 3600)))")
+        }
+        lines.append("Moon: \(Int(moonIllumination * 100))% " +
+                     (waxing ? "waxing" : "waning"))
+        lines.append("Horizon: " + (horizon.isEmpty
+            ? "flat \(Fmt.deg(minAlt)) minimum"
+            : "custom profile (\(horizon.points.count) points)"))
+        lines.append("Rig: \(rig.name) — \(rig.specLine)")
+        lines.append("Cloud: \(cloudSummary(cloud, now: now))")
+        lines.append("")
+        lines.append(usingList
+            ? "Targets: observing list (\(list.count))"
+            : "Targets: top \(list.count) ranked (observing list empty)")
+        for (i, t) in list.enumerated() {
+            lines.append("")
+            lines.append("## \(i + 1). \(t.object.name) — " +
+                         t.object.type.replacingOccurrences(of: "_",
+                                                            with: " "))
+            if let w = imagingWindow(object: t.object, lat: lat, lon: lon,
+                                     minAlt: minAlt, now: now,
+                                     horizon: horizon)
+            {
+                var status = ""
+                if now < w.start {
+                    status = " — opens in " +
+                        Fmt.countdown(w.start.timeIntervalSince(now))
+                } else if now <= w.end {
+                    status = " — OPEN NOW, closes in " +
+                        Fmt.countdown(w.end.timeIntervalSince(now))
+                }
+                lines.append("Window: \(Fmt.time.string(from: w.start)) → " +
+                             "\(Fmt.time.string(from: w.end)) " +
+                             "(\(Fmt.dur(w.durationHours)))\(status)")
+            } else {
+                lines.append("Window: none tonight")
+            }
+            lines.append("Peak: \(Fmt.deg(t.peakAlt)) at " +
+                         "\(Fmt.time.string(from: t.peakTime))")
+            lines.append("Moon: \(Fmt.deg(t.moonSep)) separation — " +
+                         (t.moonOK ? "Moon OK" : "glare risk"))
+            let size = t.object.sizeArcmin
+                .map { String(format: "%.1f′", $0) } ?? "size unknown"
+            lines.append("Framing (\(rig.name)): " +
+                         "\(rig.framingLabel(sizeArcmin: t.object.sizeArcmin))" +
+                         " — target \(size) vs frame " +
+                         String(format: "%.2f° × %.2f°",
+                                rig.fieldWidthDeg, rig.fieldHeightDeg))
+            if imagedIDs.contains(t.id) {
+                lines.append("Imaged: ✓ already logged")
+            }
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// One-line cloud summary for the coming hours, or an honest
+    /// unavailable note when there's no forecast.
+    static func cloudSummary(_ cloud: [WeatherService.HourSample]?,
+                             now: Date) -> String
+    {
+        guard let cloud, !cloud.isEmpty else {
+            return "forecast unavailable"
+        }
+        let upcoming = cloud
+            .filter { $0.date >= now.addingTimeInterval(-1800) }
+            .prefix(8)
+        guard !upcoming.isEmpty else { return "forecast unavailable" }
+        let covers = upcoming.map(\.cover)
+        let avg = covers.reduce(0, +) / Double(covers.count)
+        let maxC = covers.max() ?? 0
+        return String(format: "%.0f%% avg, %.0f%% max over next %dh",
+                      avg, maxC, upcoming.count)
     }
 
     // MARK: - Private helpers

@@ -37,6 +37,10 @@ final class TargetStore: ObservableObject {
     private(set) var step: TimeInterval = 600
     private var rankedAt = Date.distantPast
 
+    /// The horizon profile the last ranking was computed against
+    /// (empty = flat minimum altitude).
+    private(set) var horizonProfile = HorizonProfile()
+
     @Published var settings = SiteSettings.load() {
         didSet { settings.save(); scheduleRecompute() }
     }
@@ -83,11 +87,13 @@ final class TargetStore: ObservableObject {
     func recompute() {
         debounceWork?.cancel()
         guard !catalog.isEmpty else { return }
+        let horizon = HorizonStore.load()
         let result = Ranker.rank(catalog: catalog,
                                 lat: settings.lat, lon: settings.lon,
                                 now: Date(),
                                 minAlt: settings.minAlt,
-                                limit: settings.limit)
+                                limit: settings.limit,
+                                horizon: horizon)
         targets = result.targets
         moon = result.moon
         windowStart = result.windowStart
@@ -95,12 +101,14 @@ final class TargetStore: ObservableObject {
         rankedAt = result.rankedAt
         darkStart = result.darkStart
         darkEnd = result.darkEnd
+        horizonProfile = horizon
         now = result.rankedAt
         isLoading = false
     }
 
     /// Debounced recompute so slider drags don't re-rank on every tick.
-    private func scheduleRecompute() {
+    /// Internal so the horizon editor can debounce through the same path.
+    func scheduleRecompute() {
         debounceWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.recompute() }
         debounceWork = work

@@ -69,10 +69,13 @@ struct ContentView: View {
     @StateObject private var location = LocationProvider()
     @StateObject private var sessions = SessionStore()
     @StateObject private var weather = WeatherService()
+    @StateObject private var horizonStore = HorizonStore()
+    @StateObject private var rigStore = RigStore()
     @AppStorage("AstroTonight.nightVision") private var nightVision = false
     @State private var selection: RankedTarget?
     @State private var searchText = ""
     @State private var kind: ObjectKind = .all
+    @State private var sortMode: SortMode = .rank
     @State private var listOnly = false
     @State private var hideImaged = false
     @State private var showSettings = false
@@ -85,7 +88,8 @@ struct ContentView: View {
             } detail: {
                 if let target = selection {
                     TargetDetailView(target: target, store: store,
-                                     sessions: sessions)
+                                     sessions: sessions,
+                                     rig: rigStore.selected)
                 } else {
                     ContentUnavailableView(
                         "Select a target",
@@ -151,6 +155,10 @@ struct ContentView: View {
         .task(id: "\(store.settings.lat),\(store.settings.lon)") {
             weather.refresh(lat: store.settings.lat, lon: store.settings.lon)
         }
+        .onChange(of: horizonStore.profile) { _, _ in
+            // Re-rank against the new horizon, debounced like the sliders.
+            store.scheduleRecompute()
+        }
     }
 
     // MARK: - Sidebar
@@ -176,7 +184,9 @@ struct ContentView: View {
                         NavigationLink(value: target) {
                             TargetRow(target: target,
                                       altNow: store.altNow(for: target),
-                                      minAlt: store.settings.minAlt,
+                                      threshold: store.horizonProfile.minAlt(
+                                        forAzimuth: store.azNow(for: target))
+                                        ?? store.settings.minAlt,
                                       isSaved: store.savedIDs.contains(target.id),
                                       imagedDate: sessions.dateImaged(for: target.id),
                                       onToggleSave: { store.toggleSaved(id: target.id) })
@@ -188,9 +198,19 @@ struct ContentView: View {
         }
         .safeAreaInset(edge: .top) {
             VStack(spacing: 8) {
+                topPickCard
+
                 Picker("Type", selection: $kind) {
                     ForEach(ObjectKind.allCases) { k in
                         Text(k.rawValue).tag(k)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                Picker("Sort", selection: $sortMode) {
+                    ForEach(SortMode.allCases) { m in
+                        Text(m.label).tag(m)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -209,23 +229,48 @@ struct ContentView: View {
                 }
                 .font(.callout)
 
-                if listOnly {
+                HStack(spacing: 14) {
+                    if listOnly {
+                        Button {
+                            copyToClipboard(Planning.nightPlanYAML(
+                                savedIDs: store.savedIDs,
+                                ranked: store.targets,
+                                lat: store.settings.lat, lon: store.settings.lon,
+                                minAlt: store.settings.minAlt,
+                                date: store.now))
+                        } label: {
+                            Label("Export night plan", systemImage: "doc.on.doc")
+                        }
+                        .buttonStyle(.link)
+                        .help("Copy the observing list as an AstroCapture " +
+                              "multi-target night plan")
+                        .disabled(store.savedIDs.isEmpty)
+                    }
                     Button {
-                        copyToClipboard(Planning.nightPlanYAML(
+                        copyToClipboard(Planning.observingPlanText(
                             savedIDs: store.savedIDs,
                             ranked: store.targets,
                             lat: store.settings.lat, lon: store.settings.lon,
+                            siteLabel: location.isFollowing
+                                ? "device location" : SiteSettings.siteName,
                             minAlt: store.settings.minAlt,
-                            date: store.now))
+                            horizon: store.horizonProfile,
+                            darkStart: store.darkStart,
+                            darkEnd: store.darkEnd,
+                            cloud: cloudSamples,
+                            moonIllumination: store.moon?.illumination ?? 0,
+                            waxing: store.moon?.waxing ?? false,
+                            rig: rigStore.selected,
+                            imagedIDs: Set(sessions.entries.keys),
+                            now: store.now))
                     } label: {
-                        Label("Export night plan", systemImage: "doc.on.doc")
+                        Label("Copy observing plan", systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.link)
-                    .font(.callout)
-                    .help("Copy the observing list as an AstroCapture " +
-                          "multi-target night plan")
-                    .disabled(store.savedIDs.isEmpty)
+                    .help("Copy a Markdown observing plan for tonight")
+                    .disabled(store.targets.isEmpty)
                 }
+                .font(.callout)
 
                 if let ds = store.darkStart, let de = store.darkEnd {
                     Text("Dark \(Fmt.time.string(from: ds)) → " +
@@ -249,8 +294,88 @@ struct ContentView: View {
         }
         .navigationDestination(for: RankedTarget.self) { target in
             TargetDetailView(target: target, store: store,
-                             sessions: sessions)
+                             sessions: sessions,
+                             rig: rigStore.selected)
         }
+    }
+
+    // MARK: - Top pick hero card
+
+    /// Cached forecast samples, if the weather service has them.
+    private var cloudSamples: [WeatherService.HourSample]? {
+        if case .ready(let hours) = weather.state { return hours }
+        return nil
+    }
+
+    /// "Image this now" hero card: the heuristic top pick when its window
+    /// is open, otherwise the next upcoming window, otherwise nothing.
+    private var topPickCard: some View {
+        let pick = Planning.topPick(
+            ranked: store.targets,
+            lat: store.settings.lat, lon: store.settings.lon,
+            horizon: store.horizonProfile,
+            minAlt: store.settings.minAlt,
+            now: store.now,
+            cloud: cloudSamples)
+        return Group {
+            if let pick, pick.openNow {
+                Button {
+                    selection = pick.target
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("IMAGE THIS NOW")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.green)
+                        Text(pick.target.object.name)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        Text(topPickDetails(pick))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                }
+                .buttonStyle(.plain)
+                .glassPanel(radius: 10)
+            } else if let next = Planning.nextUpcomingWindow(
+                ranked: store.targets,
+                lat: store.settings.lat, lon: store.settings.lon,
+                horizon: store.horizonProfile,
+                minAlt: store.settings.minAlt,
+                now: store.now)
+            {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("NOTHING IMAGEABLE RIGHT NOW")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.orange)
+                    Button {
+                        selection = next.target
+                    } label: {
+                        Text("\(next.target.object.name) window opens " +
+                             "\(Fmt.time.string(from: next.window.start))")
+                            .font(.callout)
+                    }
+                    .buttonStyle(.link)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .glassPanel(radius: 10)
+            }
+        }
+    }
+
+    private func topPickDetails(_ pick: Planning.TopPick) -> String {
+        var bits = ["window closes in " +
+            "\(Fmt.countdown(pick.window.end.timeIntervalSince(store.now)))"]
+        if let c = pick.cloudCover {
+            bits.append("cloud \(Int(c))%")
+        }
+        bits.append(pick.target.moonOK ? "Moon OK" : "Moon glare risk")
+        return bits.joined(separator: " · ")
     }
 
     // MARK: - Device location
@@ -338,6 +463,12 @@ struct ContentView: View {
                     .monospacedDigit()
                     .frame(width: 44, alignment: .trailing)
             }
+            if !horizonStore.profile.isEmpty {
+                Text("Horizon profile active — the slider is the fallback " +
+                     "where the profile has no survey.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             HStack {
                 Text("Show")
                 Spacer()
@@ -350,6 +481,10 @@ struct ContentView: View {
                 .labelsHidden()
                 .frame(width: 140)
             }
+            Divider()
+            rigControls
+            Divider()
+            HorizonEditor(horizon: horizonStore)
             Button("Reset to \(SiteSettings.siteName)") {
                 location.stop()
                 store.settings = SiteSettings()
@@ -360,6 +495,36 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.top, 4)
+    }
+
+    private var rigControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Rig")
+                Spacer()
+                Picker("Rig", selection: $rigStore.selectedID) {
+                    ForEach(rigStore.presets) { p in
+                        Text(p.name).tag(p.id)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 210)
+            }
+            Text(rigStore.selected.specLine)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            if rigStore.selectedIsCustom {
+                Button("Delete this preset") {
+                    rigStore.deleteSelectedCustom()
+                }
+                .buttonStyle(.link)
+                .foregroundStyle(.red)
+            }
+            DisclosureGroup("Add custom rig") {
+                RigCustomForm(rigStore: rigStore)
+            }
+        }
     }
 
     private var moonChip: some View {
@@ -379,7 +544,7 @@ struct ContentView: View {
     private var filtered: [RankedTarget] {
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        return store.targets.filter { target in
+        let base = store.targets.filter { target in
             if listOnly && !store.savedIDs.contains(target.id) { return false }
             if hideImaged && sessions.dateImaged(for: target.id) != nil {
                 return false
@@ -391,6 +556,36 @@ struct ContentView: View {
             if target.object.name.lowercased().contains(q) { return true }
             return target.object.ids.contains {
                 $0.lowercased().contains(q)
+            }
+        }
+        // Rank mode keeps the ranker's order exactly; the others re-sort.
+        switch sortMode {
+        case .rank:
+            return base
+        case .peakTime:
+            return base.sorted { $0.peakTime < $1.peakTime }
+        case .name:
+            return base.sorted {
+                $0.object.name.localizedStandardCompare($1.object.name)
+                    == .orderedAscending
+            }
+        case .windowOpens:
+            var windows = [String: Planning.ImagingWindow]()
+            for t in base {
+                windows[t.id] = Planning.imagingWindow(
+                    object: t.object,
+                    lat: store.settings.lat, lon: store.settings.lon,
+                    minAlt: store.settings.minAlt,
+                    now: store.now,
+                    horizon: store.horizonProfile)
+            }
+            return base.sorted { a, b in
+                switch (windows[a.id], windows[b.id]) {
+                case let (x?, y?): return x.start < y.start
+                case (_?, nil): return true
+                case (nil, _?): return false
+                default: return false
+                }
             }
         }
     }
@@ -460,7 +655,9 @@ struct ContentView: View {
 struct TargetRow: View {
     let target: RankedTarget
     let altNow: Double
-    let minAlt: Double
+    /// Per-target minimum: surveyed horizon at the current azimuth when
+    /// one exists, else the flat slider value.
+    let threshold: Double
     let isSaved: Bool
     let imagedDate: Date?
     let onToggleSave: () -> Void
@@ -544,7 +741,7 @@ struct TargetRow: View {
 
     private var nowBadge: some View {
         let (text, color): (String, Color) =
-            altNow >= minAlt ? ("up now", .green)
+            altNow >= threshold ? ("up now", .green)
             : altNow >= 0 ? ("low", .orange)
             : ("down", .secondary)
         return Text("\(text) · \(Fmt.deg(altNow))")
@@ -555,5 +752,129 @@ struct TargetRow: View {
             .background(color.opacity(0.15))
             .foregroundStyle(color)
             .clipShape(Capsule())
+    }
+}
+
+// MARK: - Horizon editor
+
+/// Numeric survey of the real horizon: azimuth/altitude rows with
+/// steppers, add/remove, and reset-to-flat. Points are linearly
+/// interpolated around the compass by `HorizonProfile`.
+struct HorizonEditor: View {
+    @ObservedObject var horizon: HorizonStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Horizon profile")
+                Spacer()
+                if !horizon.profile.points.isEmpty {
+                    Button("Reset to flat") { horizon.clear() }
+                        .buttonStyle(.link)
+                }
+            }
+            if horizon.profile.points.isEmpty {
+                Text("Flat — the min-altitude slider above applies everywhere.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach($horizon.profile.points) { $point in
+                    HStack(spacing: 6) {
+                        Text("Az")
+                        Stepper(value: $point.azimuth, in: 0...360, step: 5) {
+                            Text("\(Int(point.azimuth))°")
+                                .monospacedDigit()
+                                .frame(width: 46, alignment: .trailing)
+                        }
+                        Text("Alt")
+                        Stepper(value: $point.altitude, in: 0...80, step: 1) {
+                            Text("\(Int(point.altitude))°")
+                                .monospacedDigit()
+                                .frame(width: 40, alignment: .trailing)
+                        }
+                        Spacer()
+                        Button {
+                            horizon.remove($point.wrappedValue)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                                .foregroundStyle(.red)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Remove this point")
+                    }
+                    .font(.callout)
+                }
+            }
+            Button {
+                horizon.addPoint()
+            } label: {
+                Label("Add horizon point", systemImage: "plus")
+            }
+            .buttonStyle(.link)
+            Text("Stand where the scope sits, note the compass azimuth and " +
+                 "the altitude where the sky opens up (trees, roof…). " +
+                 "Empty = flat minimum.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - Custom rig form
+
+/// Number fields for a user-defined rig preset.
+struct RigCustomForm: View {
+    @ObservedObject var rigStore: RigStore
+    @State private var name = ""
+    @State private var focalLength = 1500.0
+    @State private var focalRatio = 10.0
+    @State private var sensorW = 22.3
+    @State private var sensorH = 14.9
+    @State private var pixel = 3.72
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("Name (e.g. 6SE + ASI533MC)", text: $name)
+                .textFieldStyle(.roundedBorder)
+            numberRow("Focal length", $focalLength, "mm")
+            numberRow("Focal ratio", $focalRatio, "f/")
+            numberRow("Sensor width", $sensorW, "mm")
+            numberRow("Sensor height", $sensorH, "mm")
+            numberRow("Pixel size", $pixel, "µm")
+            Button("Add preset") {
+                let trimmed = name.trimmingCharacters(
+                    in: .whitespacesAndNewlines)
+                rigStore.addCustom(RigPreset(
+                    id: UUID().uuidString,
+                    name: trimmed.isEmpty ? "Custom rig" : trimmed,
+                    focalLengthMM: focalLength,
+                    focalRatio: focalRatio,
+                    sensorWidthMM: sensorW,
+                    sensorHeightMM: sensorH,
+                    pixelMicrons: pixel,
+                    isBuiltin: false))
+                name = ""
+            }
+            .buttonStyle(.link)
+            .disabled(focalLength <= 0 || sensorW <= 0
+                        || sensorH <= 0 || pixel <= 0)
+        }
+        .padding(.top, 4)
+    }
+
+    private func numberRow(_ label: String, _ value: Binding<Double>,
+                           _ unit: String) -> some View
+    {
+        HStack {
+            Text(label)
+            Spacer()
+            TextField(label, value: value, format: .number)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 72)
+                .multilineTextAlignment(.trailing)
+            Text(unit)
+                .foregroundStyle(.secondary)
+                .frame(width: 30, alignment: .leading)
+        }
     }
 }
