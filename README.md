@@ -94,6 +94,16 @@ location button.
   (current hour + next 6, colour-coded) next to the dark-hours line.
   Free, no API key — but it needs internet, and it's a forecast, not a
   measurement.
+- **Seeing forecast** — next to the cloud strip, the sidebar shows the
+  7Timer astro seeing (1–8, lower is better) and transparency (1–8,
+  higher is better) for the current hour, colour-coded. Free, no API
+  key; cached ~6 h since the model updates twice daily. Coarse 0.5°
+  model — a forecast, not a measurement. Seeing also feeds the top-pick
+  score as a small penalty and appears in the observing plan.
+- **DSS preview** — the detail view shows a Digitized Sky Survey
+  (DSS2 Red) cutout of the target from NASA SkyView, fetched on demand
+  and cached on disk (~200 MB cap, oldest evicted first). Needs
+  internet; a failed fetch shows a quiet placeholder, never an error.
 - **Dark shading on the altitude chart** — the astronomically dark
   interval is shaded behind the altitude curve, so you can see at a
   glance when the target is both up and the sky is dark.
@@ -163,10 +173,16 @@ the detail view crossfades between targets.
   the neighbour's porch light. The cloud strip is an Open-Meteo
   **forecast**, not a measurement — look up before you haul the scope
   out.
+- The seeing forecast is 7Timer's **coarse astro model** (0.5° grid,
+  updated twice daily) — useful for "is tonight a high-res night",
+  not a measurement of your sky.
+- DSS previews need internet and are **cached per target** (~200 MB
+  cap); SkyView is a best-effort public service, so a missing preview
+  is normal, not a bug.
 - The "image this now" top pick is a **heuristic score** (rank position +
-  window-open bonus + cloud penalty + moon penalty), documented in
-  `Planning.topPick`. It points at the detail view; the detail view has
-  the real numbers.
+  window-open bonus + cloud penalty + moon penalty + small seeing
+  penalty), documented in `Planning.topPick`. It points at the detail
+  view; the detail view has the real numbers.
 - The horizon editor is **numeric** (azimuth/altitude steppers), not a
   drawn skyline — stand where the scope sits and dial each point in.
 - Night-vision mode is a **v1 overlay** (red multiply layer), not a

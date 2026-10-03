@@ -258,6 +258,7 @@ struct ContentView: View {
                             darkStart: store.darkStart,
                             darkEnd: store.darkEnd,
                             cloud: cloudSamples,
+                            seeing: seeingSamples,
                             moonIllumination: store.moon?.illumination ?? 0,
                             waxing: store.moon?.waxing ?? false,
                             rig: rigStore.selected,
@@ -283,6 +284,8 @@ struct ContentView: View {
 
                 cloudStrip
 
+                seeingRow
+
                 DisclosureGroup("Site · \(SiteSettings.siteName)", isExpanded: $showSettings) {
                     siteControls
                 }
@@ -307,6 +310,12 @@ struct ContentView: View {
         return nil
     }
 
+    /// Cached 7Timer seeing samples, if the weather service has them.
+    private var seeingSamples: [WeatherService.SeeingSample]? {
+        if case .ready(let samples) = weather.seeingState { return samples }
+        return nil
+    }
+
     /// "Image this now" hero card: the heuristic top pick when its window
     /// is open, otherwise the next upcoming window, otherwise nothing.
     private var topPickCard: some View {
@@ -316,7 +325,8 @@ struct ContentView: View {
             horizon: store.horizonProfile,
             minAlt: store.settings.minAlt,
             now: store.now,
-            cloud: cloudSamples)
+            cloud: cloudSamples,
+            seeing: seeingSamples)
         return Group {
             if let pick, pick.openNow {
                 Button {
@@ -373,6 +383,9 @@ struct ContentView: View {
             "\(Fmt.countdown(pick.window.end.timeIntervalSince(store.now)))"]
         if let c = pick.cloudCover {
             bits.append("cloud \(Int(c))%")
+        }
+        if let s = pick.seeing {
+            bits.append("seeing \(s) · \(WeatherService.seeingLabel(s))")
         }
         bits.append(pick.target.moonOK ? "Moon OK" : "Moon glare risk")
         return bits.joined(separator: " · ")
@@ -640,6 +653,59 @@ struct ContentView: View {
     private func cloudColor(_ cover: Double) -> Color {
         if cover < 30 { return .green }
         if cover < 70 { return .orange }
+        return .red
+    }
+
+    // MARK: - Seeing forecast (7Timer)
+
+    /// The 7Timer sample nearest now, or nil when the forecast isn't in.
+    private var currentSeeing: WeatherService.SeeingSample? {
+        guard let samples = seeingSamples else { return nil }
+        return Planning.seeing(at: store.now, in: samples)
+    }
+
+    private var seeingRow: some View {
+        Group {
+            switch weather.seeingState {
+            case .idle, .loading:
+                Text("Seeing —")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .failed:
+                Text("Seeing forecast unavailable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .ready:
+                if let s = currentSeeing {
+                    HStack(spacing: 6) {
+                        Image(systemName: "eye")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("Seeing \(s.seeing) · " +
+                             "\(WeatherService.seeingLabel(s.seeing))")
+                            .foregroundStyle(seeingColor(s.seeing))
+                        Text("·")
+                            .foregroundStyle(.secondary)
+                        Text("Transparency \(s.transparency)/8")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
+                    .monospacedDigit()
+                } else {
+                    Text("Seeing —")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .help("7Timer astro forecast: seeing 1–8 (lower is better), " +
+              "transparency 1–8 (higher is better). Coarse model, not a " +
+              "measurement.")
+    }
+
+    private func seeingColor(_ seeing: Int) -> Color {
+        if seeing <= 2 { return .green }
+        if seeing <= 5 { return .orange }
         return .red
     }
 

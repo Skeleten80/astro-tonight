@@ -11,6 +11,7 @@ struct TargetDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                thumbnailSection
                 tonightSection
                     .padding(14)
                     .glassPanel()
@@ -103,6 +104,23 @@ struct TargetDetailView: View {
     }
 
     // MARK: - Tonight
+
+    /// DSS survey cutout for the target, fetched on demand and cached on
+    /// disk by `ThumbnailService`. The night-vision red overlay sits above
+    /// everything at the top level, so no extra work is needed for it here.
+    private var thumbnailSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionHeader("Preview · DSS2 Red")
+            ThumbnailView(object: target.object)
+                .frame(width: 300, height: 300)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .glassPanel(radius: 10)
+            Text("Digitized Sky Survey via NASA SkyView — cached after the " +
+                 "first view, needs internet.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
 
     private var tonightSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -429,6 +447,48 @@ struct SessionLogSection: View {
             }
         }
         .onAppear { notesDraft = sessions.entry(for: targetID)?.notes ?? "" }
+    }
+}
+
+// MARK: - DSS thumbnail
+
+/// On-demand Digitized Sky Survey preview. Fetches once per target
+/// (disk-cached by `ThumbnailService`); `.task(id:)` re-triggers when the
+/// selection changes. Failures stay quiet — a subtle placeholder, never
+/// an error state — so the rest of the detail view is never blocked.
+struct ThumbnailView: View {
+    let object: CatalogObject
+    @State private var image: NSImage? = nil
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else if failed {
+                VStack(spacing: 4) {
+                    Image(systemName: "photo")
+                        .font(.title2)
+                    Text("Preview unavailable")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.secondary)
+            } else {
+                ProgressView()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: object.id) {
+            image = nil
+            failed = false
+            if let data = await ThumbnailService.data(for: object) {
+                image = NSImage(data: data)
+            } else {
+                failed = true
+            }
+        }
     }
 }
 

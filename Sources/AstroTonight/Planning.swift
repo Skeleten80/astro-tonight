@@ -184,6 +184,10 @@ enum Planning {
     ///   + 25  if a window opens within the next 2 h
     ///   − cloud cover % at the current hour   (forecast; no penalty if nil)
     ///   − 30  if the Moon is a glare risk for this target
+    ///   − 5 × (seeing − 3), floored at 0      (7Timer forecast; no penalty
+    ///                                          if nil — deliberately small
+    ///                                          so seeing can't dominate
+    ///                                          rank/window)
     /// Targets with no imaging window tonight are skipped entirely.
     /// This is a heuristic, not a measurement — the detail view carries
     /// the real numbers behind it.
@@ -192,6 +196,7 @@ enum Planning {
         let window: ImagingWindow
         let openNow: Bool
         let cloudCover: Double?
+        let seeing: Int?
         let score: Double
     }
 
@@ -200,7 +205,8 @@ enum Planning {
                         horizon: HorizonProfile,
                         minAlt: Double,
                         now: Date,
-                        cloud: [WeatherService.HourSample]?) -> TopPick?
+                        cloud: [WeatherService.HourSample]?,
+                        seeing: [WeatherService.SeeingSample]? = nil) -> TopPick?
     {
         var best: TopPick? = nil
         for (index, target) in ranked.enumerated() {
@@ -212,14 +218,16 @@ enum Planning {
             let opensSoon = !openNow && window.start > now &&
                 window.start.timeIntervalSince(now) <= 2 * 3600
             let cover = cloud.flatMap { cloudCover(at: now, in: $0) }
+            let see = seeing.flatMap { seeing(at: now, in: $0)?.seeing }
             var score = 100.0 - Double(index)
             if openNow { score += 50 }
             else if opensSoon { score += 25 }
             if let c = cover { score -= c }
             if !target.moonOK { score -= 30 }
+            if let s = see { score -= max(0, 5.0 * (Double(s) - 3.0)) }
             let pick = TopPick(target: target, window: window,
                                openNow: openNow, cloudCover: cover,
-                               score: score)
+                               seeing: see, score: score)
             if best == nil || pick.score > best!.score { best = pick }
         }
         return best
@@ -263,6 +271,22 @@ enum Planning {
         return n.cover
     }
 
+    /// The 7Timer sample nearest `date` (3-hour blocks); nil when no
+    /// sample is within 90 minutes.
+    static func seeing(at date: Date,
+                       in samples: [WeatherService.SeeingSample])
+        -> WeatherService.SeeingSample?
+    {
+        let nearest = samples.min(by: {
+            abs($0.date.timeIntervalSince(date))
+                < abs($1.date.timeIntervalSince(date))
+        })
+        guard let n = nearest,
+              abs(n.date.timeIntervalSince(date)) <= 5400
+        else { return nil }
+        return n
+    }
+
     // MARK: - Field-ready observing plan (Markdown)
 
     /// A Markdown observing plan for tonight, ready to copy into notes or
@@ -278,6 +302,7 @@ enum Planning {
         darkStart: Date?,
         darkEnd: Date?,
         cloud: [WeatherService.HourSample]?,
+        seeing: [WeatherService.SeeingSample]?,
         moonIllumination: Double,
         waxing: Bool,
         rig: RigPreset,
@@ -305,6 +330,13 @@ enum Planning {
             : "custom profile (\(horizon.points.count) points)"))
         lines.append("Rig: \(rig.name) — \(rig.specLine)")
         lines.append("Cloud: \(cloudSummary(cloud, now: now))")
+        if let s = seeing.flatMap({ seeing(at: now, in: $0) }) {
+            lines.append("Seeing: \(s.seeing) " +
+                         "(\(WeatherService.seeingLabel(s.seeing))) · " +
+                         "transparency \(s.transparency)/8 (7Timer forecast)")
+        } else {
+            lines.append("Seeing: forecast unavailable")
+        }
         lines.append("")
         lines.append(usingList
             ? "Targets: observing list (\(list.count))"
