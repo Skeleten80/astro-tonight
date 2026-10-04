@@ -9,7 +9,7 @@ import Foundation
 /// surfaced so the UI can fall back to the manual site controls instead
 /// of leaving a dead button.
 final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDelegate {
-    enum State: Equatable {
+    enum State {
         case idle
         case requesting
         case following(CLLocationCoordinate2D)
@@ -49,7 +49,7 @@ final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDeleg
         case .notDetermined:
             state = .requesting
             manager.requestWhenInUseAuthorization()
-        case .authorized, .authorizedWhenInUse:
+        case .authorizedAlways, .authorizedWhenInUse:
             startFix()
         case .denied, .restricted:
             state = .denied
@@ -77,7 +77,7 @@ final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDeleg
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         switch manager.authorizationStatus {
-        case .authorized, .authorizedWhenInUse:
+        case .authorizedAlways, .authorizedWhenInUse:
             if case .requesting = state { startFix() }
         case .denied, .restricted:
             state = .denied
