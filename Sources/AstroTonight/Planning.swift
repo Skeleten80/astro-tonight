@@ -260,7 +260,7 @@ enum Planning {
             let opensSoon = !openNow && window.start > now &&
                 window.start.timeIntervalSince(now) <= 2 * 3600
             let cover = cloud.flatMap { cloudCover(at: now, in: $0) }
-            let see = seeing.flatMap { seeing(at: now, in: $0)?.seeing }
+            let see = seeing.flatMap { Planning.seeing(at: now, in: $0)?.seeing }
             var score = 100.0 - Double(index)
             if openNow { score += 50 }
             else if opensSoon { score += 25 }
@@ -374,7 +374,7 @@ enum Planning {
             : "custom profile (\(horizon.points.count) points)"))
         lines.append("Rig: \(rig.name) — \(rig.specLine)")
         lines.append("Cloud: \(cloudSummary(cloud, now: now))")
-        if let s = seeing.flatMap({ seeing(at: now, in: $0) }) {
+        if let s = seeing.flatMap({ Planning.seeing(at: now, in: $0) }) {
             lines.append("Seeing: \(s.seeing) " +
                          "(\(WeatherService.seeingLabel(s.seeing))) · " +
                          "transparency \(s.transparency)/8 (7Timer forecast)")
