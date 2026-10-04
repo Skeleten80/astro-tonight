@@ -547,8 +547,7 @@ struct ContentView: View {
         Planning.sessionLogMarkdown(
             sessions: sessions,
             nameFor: { id in
-                store.targets.first(where: { $0.id == id })
-                    ?.object.name ?? id
+                store.targets.first(where: { $0.id == id })?.object.name ?? id
             },
             now: store.now)
     }
