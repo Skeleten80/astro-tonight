@@ -69,6 +69,56 @@ than none. Creating the project on the iMac takes about five minutes.
   that don't expire. Worth it only if you want the app on your phone
   permanently without the weekly re-run.
 
+## TestFlight (paid developer account)
+
+With the paid account, the flow is: archive once in Xcode, upload to
+App Store Connect, install via the TestFlight app. Builds stay valid for
+**90 days** — re-upload a fresh build every ~3 months to keep it alive
+(just bump the build number and repeat steps 4–5).
+
+1. **Bundle ID.** In the target's General tab, set something stable and
+   reverse-DNS, e.g. `com.skeleten80.AstroTonight`. You'll reuse this
+   exact string in App Store Connect — it must match.
+
+2. **Create the App Store Connect record** (browser, once):
+   [App Store Connect](https://appstoreconnect.apple.com) → My Apps →
+   **+** → New App → platform **iOS**, name `AstroTonight`, bundle ID
+   from step 1, SKU anything (e.g. `astrotonight-ios-1`).
+
+3. **Version/build numbers** (Xcode, target → General): set **Version**
+   `1.0` and **Build** `1`. Every upload needs a *higher build number*
+   than the last — that's the only thing you must bump for re-uploads.
+
+4. **Archive:** in Xcode's run-destination menu choose **Any iOS Device
+   (arm64)** (not a simulator), then **Product → Archive**. The first
+   archive is the slowest; it also catches anything the debug build let
+   slide.
+
+5. **Upload:** when the Organizer window opens, select the archive →
+   **Distribute App → App Store Connect → Upload** → Next through the
+   defaults (include symbols: yes). Wait for the "upload successful"
+   confirmation.
+
+6. **Wait for processing:** in App Store Connect → your app →
+   **TestFlight** tab, the build appears once Apple finishes processing
+   (usually 10–30 minutes). You'll get an email.
+
+7. **Add yourself as a tester:** TestFlight tab → **Internal Testing**
+   → add yourself (your Apple ID must be added under Users and Access
+   first if it isn't). Internal testers skip beta app review — the build
+   is available immediately after processing.
+
+8. **Install:** on the iPhone/iPad, install Apple's **TestFlight** app
+   from the App Store, accept the invite, and install AstroTonight.
+   It now launches like any app and won't expire for 90 days.
+
+Two gotchas worth knowing: the first upload asks an **export compliance**
+question — answer "no" to non-exempt encryption for this app (it only
+uses standard HTTPS), or add the `ITSAppUsesNonExemptEncryption = NO`
+key to Info.plist to stop it asking. And if an upload is rejected for a
+missing icon, the template's `Assets.xcassets` AppIcon slot needs *some*
+image — any 1024×1024 PNG works for TestFlight.
+
 ## What differs from the Mac version
 
 - **Clipboard:** copy buttons use `UIPasteboard` — same buttons, same text.
