@@ -11,6 +11,9 @@ final class WeatherService: ObservableObject {
         let date: Date
         /// Cloud cover, 0...100 %.
         let cover: Double
+        /// Open-Meteo wind_speed_10m, km/h. Nil when the request that
+        /// produced this sample didn't ask for it.
+        let windKmh: Double?
     }
 
     enum State: Equatable {
@@ -63,6 +66,8 @@ final class WeatherService: ObservableObject {
         struct Hourly: Decodable {
             let time: [String]
             let cloud_cover: [Double]
+            /// Optional: only present when the request asks for it.
+            let wind_speed_10m: [Double]?
         }
         let utc_offset_seconds: Int
         let hourly: Hourly
@@ -74,7 +79,8 @@ final class WeatherService: ObservableObject {
         comps.queryItems = [
             URLQueryItem(name: "latitude", value: String(lat)),
             URLQueryItem(name: "longitude", value: String(lon)),
-            URLQueryItem(name: "hourly", value: "cloud_cover"),
+            URLQueryItem(name: "hourly",
+                         value: "cloud_cover,wind_speed_10m"),
             URLQueryItem(name: "forecast_days", value: "2"),
             URLQueryItem(name: "timezone", value: "auto"),
         ]
@@ -90,10 +96,22 @@ final class WeatherService: ObservableObject {
             fmt.dateFormat = "yyyy-MM-dd'T'HH:mm"
             fmt.timeZone = TimeZone(secondsFromGMT: decoded.utc_offset_seconds)
             var samples = [HourSample]()
-            samples.reserveCapacity(decoded.hourly.time.count)
-            for (t, c) in zip(decoded.hourly.time, decoded.hourly.cloud_cover) {
-                guard let d = fmt.date(from: t) else { continue }
-                samples.append(HourSample(date: d, cover: c))
+            let n = min(decoded.hourly.time.count,
+                        decoded.hourly.cloud_cover.count)
+            samples.reserveCapacity(n)
+            for i in 0..<n {
+                guard let d = fmt.date(from: decoded.hourly.time[i]) else {
+                    continue
+                }
+                let wind: Double?
+                if let w = decoded.hourly.wind_speed_10m, i < w.count {
+                    wind = w[i]
+                } else {
+                    wind = nil
+                }
+                samples.append(HourSample(date: d,
+                                          cover: decoded.hourly.cloud_cover[i],
+                                          windKmh: wind))
             }
             return samples.isEmpty ? nil : samples
         } catch {
@@ -110,6 +128,12 @@ final class WeatherService: ObservableObject {
         let seeing: Int
         /// 7Timer transparency scale 1...8 (higher is better).
         let transparency: Int
+        /// 7Timer wind10m.speed. Documented unit assumption: with
+        /// `unit=metric` 7Timer reports km/h. Nil when the point didn't
+        /// carry wind data.
+        let windKmh: Double?
+        /// 7Timer wind10m.direction ("N", "SE", …). Nil when absent.
+        let windDirection: String?
     }
 
     enum SeeingState: Equatable {
@@ -174,6 +198,13 @@ final class WeatherService: ObservableObject {
         let timepoint: Int
         let seeing: Int
         let transparency: Int
+        /// Optional so a point without wind still decodes.
+        let wind10m: SevenTimerWind?
+    }
+
+    private struct SevenTimerWind: Decodable {
+        let direction: String
+        let speed: Double
     }
 
     private static func fetchSeeing(lat: Double, lon: Double)
@@ -206,7 +237,9 @@ final class WeatherService: ObservableObject {
                 SeeingSample(
                     date: base.addingTimeInterval(Double(p.timepoint) * 3600),
                     seeing: p.seeing,
-                    transparency: p.transparency)
+                    transparency: p.transparency,
+                    windKmh: p.wind10m?.speed,
+                    windDirection: p.wind10m?.direction)
             }
             return samples.isEmpty ? nil : samples
         } catch {

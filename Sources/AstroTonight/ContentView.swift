@@ -106,6 +106,7 @@ struct ContentView: View {
     @AppStorage("AstroTonight.nightVision") private var nightVision = false
     @AppStorage("AstroTonight.didOnboard") private var didOnboard = false
     @AppStorage("AstroTonight.useFahrenheit") private var useFahrenheit = false
+    @AppStorage("AstroTonight.trailTolerancePx") private var trailTolerancePx = 2.0
     @State private var selection: RankedTarget?
     @State private var searchText = ""
     @State private var kind: ObjectKind = .all
@@ -210,6 +211,9 @@ struct ContentView: View {
         .onChange(of: notifications.masterEnabled) { _, _ in
             scheduleNotifications()
         }
+        .onChange(of: notifications.duskEnabled) { _, _ in
+            scheduleNotifications()
+        }
         .onChange(of: notifications.isAuthorized) { _, _ in
             scheduleNotifications()
         }
@@ -224,15 +228,17 @@ struct ContentView: View {
         }
     }
 
-    /// (Re-)schedule window-open reminders for opted-in targets. Called
-    /// whenever the ranking, the opt-ins, or the master switch changes —
-    /// the service itself cancels stale requests first.
+    /// (Re-)schedule window-open reminders for opted-in targets (plus
+    /// the dusk reminder when enabled). Called whenever the ranking,
+    /// the opt-ins, or the master switch changes — the service itself
+    /// cancels stale requests first.
     private func scheduleNotifications() {
         notifications.refresh(ranked: store.targets,
                               lat: store.settings.lat,
                               lon: store.settings.lon,
                               minAlt: store.settings.minAlt,
                               horizon: store.horizonProfile,
+                              darkStart: store.darkStart,
                               now: store.now)
     }
 
@@ -287,6 +293,8 @@ struct ContentView: View {
                         horizon: store.horizonProfile,
                         darkStart: store.darkStart,
                         darkEnd: store.darkEnd,
+                        bestDarkStart: bestDarkStretch?.start,
+                        bestDarkEnd: bestDarkStretch?.end,
                         now: store.now,
                         windowStart: store.windowStart,
                         selection: $selection)
@@ -387,11 +395,26 @@ struct ContentView: View {
                         .monospacedDigit()
                 }
 
+                Text(moonRiseSetText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                if let bd = bestDarkStretch {
+                    Text("Best dark \(Fmt.time.string(from: bd.start)) → " +
+                         "\(Fmt.time.string(from: bd.end)) · " +
+                         Fmt.dur(bd.durationHours))
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                        .monospacedDigit()
+                }
+
                 cloudStrip
 
                 seeingRow
 
                 dewRow
+
+                windRow
 
                 MoonMonthView(now: store.now)
 
@@ -729,6 +752,9 @@ struct ContentView: View {
                     : "Tap a target's bell to request notification permission.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Toggle("Remind me at astronomical dusk",
+                       isOn: $notifications.duskEnabled)
+                    .font(.callout)
             }
             Button("Reset to \(SiteSettings.siteName)") {
                 location.stop()
@@ -797,6 +823,19 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
+            HStack {
+                Text("Trail tolerance")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Slider(value: $trailTolerancePx, in: 1...5, step: 0.5)
+                    .frame(width: 120)
+                Text("\(String(format: "%.1f", trailTolerancePx)) px")
+                    .monospacedDigit()
+                    .frame(width: 44, alignment: .trailing)
+            }
+            .font(.callout)
+            .help("Corner-trailing tolerance for the max-sub recommendation " +
+                  "in each target's detail view.")
             if rigStore.selectedIsCustom {
                 Button("Delete this preset") {
                     rigStore.deleteSelectedCustom()
@@ -814,11 +853,49 @@ struct ContentView: View {
         Group {
             if let moon = store.moon {
                 Label(
-                    String(format: "%.0f%% %@", moon.illumination * 100,
-                           moon.waxing ? "waxing" : "waning"),
+                    String(format: "%.0f%% · %@", moon.illumination * 100,
+                           AstroMath.moonPhaseName(
+                            illumination: moon.illumination,
+                            waxing: moon.waxing)),
                     systemImage: "moon.stars")
                     .help("Lunar illumination right now")
             }
+        }
+    }
+
+    // MARK: - Moonrise/moonset + best dark stretch
+
+    /// The moon's rise/set crossings nearest to now (low-precision
+    /// model, ±1° — times good to ~±10 min).
+    private var moonEvents: (rise: Date?, set: Date?) {
+        AstroMath.moonRiseSet(lat: store.settings.lat,
+                              lon: store.settings.lon,
+                              now: store.now)
+    }
+
+    /// Longest stretch that is both astronomically dark and moonless.
+    private var bestDarkStretch: Planning.ImagingWindow? {
+        Planning.bestDarkStretch(lat: store.settings.lat,
+                                 lon: store.settings.lon,
+                                 now: store.now)
+    }
+
+    private var moonRiseSetText: String {
+        let ev = moonEvents
+        switch (ev.rise, ev.set) {
+        case let (r?, s?):
+            return "Moonrise \(Fmt.time.string(from: r)) · " +
+                "Moonset \(Fmt.time.string(from: s))"
+        case let (r?, nil):
+            return "Moonrise \(Fmt.time.string(from: r))"
+        case let (nil, s?):
+            return "Moonset \(Fmt.time.string(from: s))"
+        case (nil, nil):
+            let jd = AstroMath.julianDate(store.now)
+            let alt = AstroMath.moonAltitude(
+                julianDate: jd, lat: store.settings.lat,
+                lon: store.settings.lon)
+            return alt > 0 ? "Moon up all night" : "Moon down all night"
         }
     }
 
@@ -1050,6 +1127,59 @@ struct ContentView: View {
         if spread < 1.5 { return .red }
         if spread < 3 { return .orange }
         return .green
+    }
+
+    // MARK: - Wind (7Timer, Open-Meteo fallback)
+
+    /// Wind right now: 7Timer's wind10m first, else the nearest
+    /// Open-Meteo hour sample. Thresholds are heuristic — an SCT on an
+    /// alt-az mount starts to feel gusts well before 30 km/h.
+    private var currentWind: (kmh: Double, direction: String?)? {
+        if let s = currentSeeing, let w = s.windKmh {
+            return (w, s.windDirection)
+        }
+        if case .ready(let hours) = weather.state {
+            let nearest = hours.min(by: {
+                abs($0.date.timeIntervalSince(store.now))
+                    < abs($1.date.timeIntervalSince(store.now))
+            })
+            if let n = nearest,
+               abs(n.date.timeIntervalSince(store.now)) <= 5400,
+               let w = n.windKmh
+            {
+                return (w, nil)
+            }
+        }
+        return nil
+    }
+
+    private var windRow: some View {
+        Group {
+            if let w = currentWind {
+                HStack(spacing: 6) {
+                    Image(systemName: "wind")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Text("Wind \(Int(w.kmh)) km/h" +
+                         (w.direction.map { " \($0)" } ?? ""))
+                        .foregroundStyle(windColor(w.kmh))
+                }
+                .font(.caption)
+                .monospacedDigit()
+                .help("Wind at 10 m (7Timer forecast, Open-Meteo fallback). " +
+                      "Gusts shake an SCT — orange means think twice.")
+            } else {
+                Text("Wind —")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func windColor(_ kmh: Double) -> Color {
+        if kmh < 15 { return .green }
+        if kmh < 30 { return .orange }
+        return .red
     }
 
     private func copyToClipboard(_ s: String) {

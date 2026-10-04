@@ -29,6 +29,17 @@ final class NotificationService: ObservableObject {
         }
     }
 
+    /// "Remind me at astronomical dusk" — one notification at the next
+    /// dark-start, alongside the per-target window reminders.
+    @Published var duskEnabled: Bool =
+        UserDefaults.standard.bool(forKey: "AstroTonight.notifyDusk")
+    {
+        didSet {
+            UserDefaults.standard.set(duskEnabled,
+                                      forKey: "AstroTonight.notifyDusk")
+        }
+    }
+
     @Published private(set) var isAuthorized = false
 
     init() {
@@ -60,11 +71,14 @@ final class NotificationService: ObservableObject {
     /// Cancel pending reminders and re-schedule for opted-in targets:
     /// "window opens in 30 min", 30 minutes before `window.start`.
     /// Skips windows already open or past, and anything beyond 48 h.
-    /// No-op (cancels all) when the master switch is off or unauthorized.
+    /// Plus, when `duskEnabled`, one "astronomical dark begins" reminder
+    /// at the next dark-start. No-op (cancels all) when the master switch
+    /// is off or unauthorized.
     func refresh(ranked: [RankedTarget],
                  lat: Double, lon: Double,
                  minAlt: Double,
                  horizon: HorizonProfile,
+                 darkStart: Date? = nil,
                  now: Date)
     {
         let center = UNUserNotificationCenter.current()
@@ -96,6 +110,25 @@ final class NotificationService: ObservableObject {
                 content: content, trigger: trigger)
             center.add(request)
             scheduled += 1
+        }
+        if duskEnabled,
+           let ds = darkStart,
+           ds > now,
+           ds < now.addingTimeInterval(48 * 3600)
+        {
+            let content = UNMutableNotificationContent()
+            content.title = "Astronomical dark begins"
+            content.body = "Dark sky from " +
+                "\(Fmt.time.string(from: ds)) — tonight's imaging " +
+                "window is open."
+            content.sound = .default
+            let trigger = UNTimeIntervalNotificationTrigger(
+                timeInterval: ds.timeIntervalSince(now), repeats: false)
+            // removeAllPendingNotificationRequests() above guarantees
+            // exactly one dusk reminder is ever pending.
+            center.add(UNNotificationRequest(
+                identifier: "AstroTonight.dusk",
+                content: content, trigger: trigger))
         }
     }
 

@@ -17,6 +17,10 @@ struct NightTimelineView: View {
     let horizon: HorizonProfile
     let darkStart: Date?
     let darkEnd: Date?
+    /// Best dark stretch (astronomically dark AND moonless), drawn as a
+    /// brighter band over the dark band when known.
+    let bestDarkStart: Date?
+    let bestDarkEnd: Date?
     let now: Date
     /// Ranking-window start — the axis fallback when dark hours are nil.
     let windowStart: Date
@@ -85,6 +89,21 @@ struct NightTimelineView: View {
                                     height: fullH)
                                 .offset(x: nameWidth + 6 +
                                             xPos(ds, total: barArea))
+                        }
+                        // Best-dark stretch: brighter band + thin outline
+                        // over the dark band — the truly moonless hours.
+                        if let bs = bestDarkStart, let be = bestDarkEnd {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.indigo.opacity(0.30))
+                                .frame(
+                                    width: barWidth(bs, be, total: barArea),
+                                    height: fullH)
+                                .offset(x: nameWidth + 6 +
+                                            xPos(bs, total: barArea))
+                                .accessibilityLabel(
+                                    "Best dark stretch " +
+                                    "\(Fmt.time.string(from: bs)) to " +
+                                    "\(Fmt.time.string(from: be))")
                         }
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(rows, id: \.target.id) { row in

@@ -174,6 +174,48 @@ enum Planning {
             end: t0.addingTimeInterval(Double(best.1) * step))
     }
 
+    /// The longest contiguous stretch that is BOTH astronomically dark
+    /// (Sun ≤ −18°) AND moonless (Moon below the horizon, 0°).
+    /// The 0° moon cutoff is deliberate: even a low Moon throws glare
+    /// across a wide-field frame, so "best dark" here means truly dark,
+    /// not just sun-dark. Reuses the ImagingWindow shape; nil when no
+    /// such stretch exists in the −12 h..+24 h scan.
+    static func bestDarkStretch(lat: Double, lon: Double, now: Date)
+        -> ImagingWindow?
+    {
+        let step: TimeInterval = 600
+        let t0 = now.addingTimeInterval(-12 * 3600)
+        let t1 = now.addingTimeInterval(24 * 3600)
+        let nSteps = Int(t1.timeIntervalSince(t0) / step) + 1
+
+        var runs = [(Int, Int)]()
+        var runStart: Int? = nil
+        var prev = -1
+        for i in 0..<nSteps {
+            let t = t0.addingTimeInterval(Double(i) * step)
+            let jd = AstroMath.julianDate(t)
+            let sun = AstroMath.sunRaDec(julianDate: jd)
+            let sunAlt = AstroMath.altAz(ra: sun.ra, dec: sun.dec,
+                                         julianDate: jd,
+                                         lat: lat, lon: lon).alt
+            let moonAlt = AstroMath.moonAltitude(julianDate: jd,
+                                                 lat: lat, lon: lon)
+            if sunAlt <= -18.0 && moonAlt <= 0.0 {
+                if runStart == nil { runStart = i }
+                prev = i
+            } else if let rs = runStart {
+                runs.append((rs, prev))
+                runStart = nil
+            }
+        }
+        if let rs = runStart { runs.append((rs, prev)) }
+        guard let best = runs.max(by: { ($0.1 - $0.0) < ($1.1 - $1.0) })
+        else { return nil }
+        return ImagingWindow(
+            start: t0.addingTimeInterval(Double(best.0) * step),
+            end: t0.addingTimeInterval(Double(best.1) * step))
+    }
+
     // MARK: - Top pick ("image this now")
 
     /// The heuristic answer to "what should I image right now".
@@ -437,6 +479,12 @@ enum Planning {
             lines.append("## \(nameFor(id)) — " +
                          "\(Fmt.exposure(total)) over \(list.count) " +
                          "night\(list.count == 1 ? "" : "s")")
+            let goal = sessions.goalHours(for: id)
+            if goal > 0 {
+                let pct = Int((total / (goal * 60) * 100).rounded())
+                lines.append("Goal: \(Fmt.exposure(goal * 60)) — " +
+                             "\(min(pct, 999))%")
+            }
             for s in list {
                 var row = "- \(Fmt.dayMonth.string(from: s.dateImaged))"
                 if s.exposureMinutes > 0 {

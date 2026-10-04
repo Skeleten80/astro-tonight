@@ -73,7 +73,6 @@ enum AstroMath {
     }
 
     // MARK: - Moon (low precision, ~+/-1 deg)
-
     /// Geocentric lunar RA/Dec plus ecliptic lon/lat, degrees.
     /// Truncated Meeus/Schlyter series — good to about a degree.
     static func moonPosition(julianDate jd: Double)
@@ -144,6 +143,87 @@ enum AstroMath {
         let fraction = (1.0 - cos(elong * deg2rad)) / 2.0
         let waxing = norm180(moon.eclLon - sunLon) > 0
         return (fraction, waxing)
+    }
+
+    /// Plain-language moon phase from illumination fraction + waxing flag.
+    /// Boundaries (approximate, documented): <0.03 new, >0.97 full,
+    /// within ±0.07 of half-lit the quarters, otherwise crescent below
+    /// half and gibbous above.
+    static func moonPhaseName(illumination: Double, waxing: Bool) -> String {
+        if illumination < 0.03 { return "New Moon" }
+        if illumination > 0.97 { return "Full Moon" }
+        if abs(illumination - 0.5) < 0.07 {
+            return waxing ? "First Quarter" : "Last Quarter"
+        }
+        if illumination < 0.5 {
+            return waxing ? "Waxing Crescent" : "Waning Crescent"
+        }
+        return waxing ? "Waxing Gibbous" : "Waning Gibbous"
+    }
+
+    /// Moonrise/moonset: the upward/downward horizon crossings of the
+    /// Moon nearest to `now`, found by scanning lunar altitude every
+    /// 10 min over the same −12 h..+24 h window as the dark scan, with
+    /// linear interpolation of the crossings (mirrors `darkHours`).
+    /// Either may be nil when there is no crossing in the window; when
+    /// BOTH are nil the Moon is up (or down) all night — check the
+    /// altitude at `now` to tell which. Uses the low-precision moon
+    /// model (±1°), so times are good to ~±10 min.
+    static func moonRiseSet(lat: Double, lon: Double, now: Date)
+        -> (rise: Date?, set: Date?)
+    {
+        let step: TimeInterval = 600
+        let t0 = now.addingTimeInterval(-12 * 3600)
+        let t1 = now.addingTimeInterval(24 * 3600)
+        let nSteps = Int(t1.timeIntervalSince(t0) / step) + 1
+        var crossings = [(date: Date, rising: Bool)]()
+        var prevAlt: Double? = nil
+        for i in 0..<nSteps {
+            let t = t0.addingTimeInterval(Double(i) * step)
+            let jd = julianDate(t)
+            let mp = moonPosition(julianDate: jd)
+            let alt = altAz(ra: mp.ra, dec: mp.dec, julianDate: jd,
+                            lat: lat, lon: lon).alt
+            if let pa = prevAlt {
+                let pt = t.addingTimeInterval(-step)
+                if pa <= 0, alt > 0 {
+                    let f = (0 - pa) / (alt - pa)
+                    crossings.append(
+                        (pt.addingTimeInterval(f * step), true))
+                } else if pa >= 0, alt < 0 {
+                    let f = (0 - pa) / (alt - pa)
+                    crossings.append(
+                        (pt.addingTimeInterval(f * step), false))
+                }
+            }
+            prevAlt = alt
+        }
+        let rise = crossings.filter { $0.rising }
+            .min(by: { abs($0.date.timeIntervalSince(now))
+                < abs($1.date.timeIntervalSince(now)) })?.date
+        let set = crossings.filter { !$0.rising }
+            .min(by: { abs($0.date.timeIntervalSince(now))
+                < abs($1.date.timeIntervalSince(now)) })?.date
+        return (rise, set)
+    }
+
+    /// Lunar altitude at a moment, degrees. Convenience for "up all
+    /// night / down all night" checks.
+    static func moonAltitude(julianDate jd: Double,
+                             lat: Double, lon: Double) -> Double
+    {
+        let mp = moonPosition(julianDate: jd)
+        return altAz(ra: mp.ra, dec: mp.dec, julianDate: jd,
+                     lat: lat, lon: lon).alt
+    }
+
+    /// Airmass via the simple sec(z) approximation (z = zenith angle).
+    /// Honest limits: sec(z) diverges at the horizon while the true
+    /// airmass caps near ~38, so this is only meaningful above ~10°;
+    /// nil at or below the horizon.
+    static func airmass(altitude: Double) -> Double? {
+        guard altitude > 0 else { return nil }
+        return 1.0 / cos((90.0 - altitude) * deg2rad)
     }
 
     // MARK: - Sun & darkness

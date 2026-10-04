@@ -211,6 +211,34 @@ navigation stack on iPhone automatically.
   `CA92.1`; add it to the Xcode target per `docs/iOS-setup.md`), iOS
   share sheets next to the copy buttons, a °F toggle, a support link,
   and accessibility labels on the icon-only controls.
+- **Moonrise / moonset** — the sidebar shows the Moon's rise/set
+  crossings nearest to now (low-precision model, ±1° — times good to
+  ~±10 min), or "up all night" / "down all night" when there are none.
+- **Best dark stretch** — the longest span that is both astronomically
+  dark *and* moonless (Moon below 0°), shown in the sidebar and as a
+  brighter band on the night timeline. "Moon sets 1:20 AM, then 3.5 h
+  of truly dark sky" is the whole point.
+- **Integration goals** — set an hour goal per target in the session
+  section; a progress bar tracks logged exposure against it, with a
+  quiet "Goal reached ✓" state. Goals ride along in the session-log
+  export.
+- **Max-sub recommendation** — each detail view recommends a maximum
+  sub-exposure from the peak field-rotation rate, your rig's pixel
+  scale, and a trail-tolerance setting (Site settings, 1–5 px, default
+  2). Rotation-only — it knows nothing of periodic error, wind, or
+  seeing.
+- **Moon phase names** — the toolbar chip reads "78% · Waxing Gibbous"
+  instead of just a number, from the 8-phase mapping off illumination
+  and waxing/waning.
+- **Airmass** — current sec(z) airmass per target in the Tonight grid
+  ("—" at/below the horizon; the approximation degrades below ~10°).
+- **Wind** — wind speed in the weather strip (7Timer `wind10m`, km/h;
+  Open-Meteo fallback), green < 15, orange < 30, red at 30+ km/h.
+  Gusts shake an SCT — orange means think twice.
+- **Dusk reminder** — a "Remind me at astronomical dusk" toggle next to
+  the window reminders; one notification at the next dark-start. Same
+  honest limits as window reminders: scheduled while the app runs, no
+  background refresh.
 
 ## Ranking semantics
 
@@ -269,6 +297,18 @@ the detail view crossfades between targets.
 - Night-vision mode is a **v1 overlay** (red multiply layer), not a
   full red theme — bright white text still shows through dimmed and
   reddened, so keep the screen brightness low at the scope.
+- Moonrise/moonset come from the **low-precision moon model** (±1°),
+  so times are good to roughly ±10 min — planning-grade, not
+  ephemeris-grade.
+- The max-sub recommendation is **field-rotation only**: it ignores
+  periodic error, wind, and seeing. Treat it as an upper bound; if
+  stars still trail, the mount (not the math) is the limit.
+- Wind thresholds are a **heuristic** (<15 green, <30 orange, ≥30 red
+  km/h) for an SCT on an alt-az mount — your site and tripod may
+  differ. 7Timer reports km/h with `unit=metric`; same units from the
+  Open-Meteo fallback.
+- Airmass uses the plain **sec(z) approximation** — fine above ~10°,
+  increasingly optimistic toward the horizon.
 - Written against the macOS 14 / iOS 17 SDKs. Like the other Xcode
   targets in this workspace, it **has not been compile-checked on Linux**
   (there is no Swift toolchain on the build VM, and SwiftUI is

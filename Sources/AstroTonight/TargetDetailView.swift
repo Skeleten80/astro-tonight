@@ -10,6 +10,9 @@ struct TargetDetailView: View {
     /// timer tick).
     let timer: SessionTimer
     let rig: RigPreset
+    /// Corner-trailing tolerance (px) for the max-sub recommendation.
+    /// Same key as the site-settings slider.
+    @AppStorage("AstroTonight.trailTolerancePx") private var trailTolerancePx = 2.0
 
     var body: some View {
         ScrollView {
@@ -183,11 +186,13 @@ struct TargetDetailView: View {
                         target.set.map { Fmt.time.string(from: $0) } ?? "—")
                 factRow("Right now",
                         "\(Fmt.deg(store.altNow(for: target))) alt · \(Fmt.deg(store.azNow(for: target))) az")
+                factRow("Airmass", airmassText)
                 factRow("Dark window", darkWindowText)
                 factRow("Dark time above min", Fmt.hours(target.darkHoursAbove))
                 factRow("Imaging window", imagingWindowText)
                 factRow("Window status", imagingWindowStatus)
                 factRow("Field rotation at peak", fieldRotationText)
+                factRow("Max sub", maxSubText)
             }
         }
     }
@@ -260,6 +265,42 @@ struct TargetDetailView: View {
         let px = arcSec / rig.pixelScaleArcsecPerPx
         return String(format: "≈ %.0f°/hr · ~%.0f px corner trailing in 30 s",
                       abs(rate), px)
+    }
+
+    /// Current airmass via sec(z). Nil (shown as "—") at/below the
+    /// horizon; the approximation degrades below ~10° but stays
+    /// monotonic, which is all a planning number needs.
+    private var airmassText: String {
+        guard let am = AstroMath.airmass(altitude: store.altNow(for: target))
+        else { return "—" }
+        return String(format: "%.1f", am)
+    }
+
+    /// Recommended maximum sub-exposure from field rotation alone: the
+    /// time for a corner star to trail `trailTolerancePx` pixels at the
+    /// peak rotation rate.
+    /// Formula mirrors `fieldRotationText` exactly: corner arcsec/sec =
+    /// |rate|/3600 · (π/180) · cornerRadiusDeg · 3600; then
+    /// seconds = tolerancePx · pixelScale / cornerArcsecPerSec.
+    /// Rotation-only — ignores periodic error, wind, and seeing.
+    private var maxSubText: String {
+        let aa = AstroMath.altAz(ra: target.object.ra, dec: target.object.dec,
+                                 julianDate: AstroMath.julianDate(target.peakTime),
+                                 lat: store.settings.lat, lon: store.settings.lon)
+        let rate = AstroMath.fieldRotationRateDegPerHour(
+            alt: aa.alt, az: aa.az, lat: store.settings.lat)
+        guard rate.isFinite, abs(rate) > 1e-9 else {
+            return "negligible rotation"
+        }
+        let cornerArcsecPerSec = abs(rate) / 3600 * .pi / 180
+            * rig.cornerRadiusDeg * 3600
+        guard cornerArcsecPerSec > 1e-9 else {
+            return "negligible rotation"
+        }
+        let seconds = trailTolerancePx * rig.pixelScaleArcsecPerPx
+            / cornerArcsecPerSec
+        return "≈ \(Int(seconds.rounded())) s " +
+            "(≤ \(String(format: "%.1f", trailTolerancePx)) px trailing)"
     }
 
     // MARK: - Framing (fits my rig?)
@@ -477,6 +518,57 @@ struct SessionLogSection: View {
         sessions.sessionCount(for: targetID)
     }
 
+    /// Integration goal: a per-target hour target with a progress bar
+    /// fed by the session log. The stepper is always visible; the bar
+    /// appears only when a goal is set.
+    private var goalRow: some View {
+        Group {
+            HStack {
+                Text("Goal")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Stepper(value: Binding(
+                    get: { sessions.goalHours(for: targetID) },
+                    set: { sessions.setGoalHours(id: targetID,
+                                                 hours: $0) }
+                ), in: 0...40, step: 0.5) {
+                    let g = sessions.goalHours(for: targetID)
+                    Text(g > 0 ? Fmt.exposure(g * 60) : "none")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("Integration goal in hours")
+            }
+            .font(.callout)
+            if sessions.goalHours(for: targetID) > 0 {
+                let goal = sessions.goalHours(for: targetID)
+                let total = sessions.totalExposureMinutes(for: targetID)
+                let goalMin = goal * 60
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(
+                        value: min(total, goalMin),
+                        total: goalMin)
+                    {
+                        Text("\(Fmt.exposure(total)) / " +
+                             "\(Fmt.exposure(goalMin))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    .tint(.green)
+                    .accessibilityLabel(
+                        "Integration goal progress: " +
+                        "\(Fmt.exposure(total)) of \(Fmt.exposure(goalMin))")
+                    if total >= goalMin {
+                        Text("Goal reached ✓")
+                            .font(.callout)
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+        }
+    }
+
     /// Name of the other target a timer is running on, if any.
     private var otherRunningName: String? {
         guard let id = timer.targetID, id != targetID else { return nil }
@@ -566,6 +658,7 @@ struct SessionLogSection: View {
                     .font(.callout)
                     .foregroundStyle(.green)
                     .monospacedDigit()
+                goalRow
                 ForEach(sessions.sessions(for: targetID)) { s in
                     HStack(spacing: 8) {
                         Text(Fmt.dayMonth.string(from: s.dateImaged))

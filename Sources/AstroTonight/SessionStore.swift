@@ -54,21 +54,31 @@ struct SessionEntry: Codable, Hashable, Identifiable {
 final class SessionStore: ObservableObject {
     @Published private(set) var entries: [String: [SessionEntry]] = [:]
 
+    /// Per-target integration goals, hours. Additive and separate from
+    /// the session log so old data is untouched by this feature.
+    @Published private(set) var goals: [String: Double] = [:]
+
     private static let key = "AstroTonight.sessionLog"
+    private static let goalsKey = "AstroTonight.integrationGoals"
 
     init() {
-        guard let data = UserDefaults.standard.data(forKey: Self.key) else {
-            return
+        if let data = UserDefaults.standard.data(forKey: Self.key) {
+            if let decoded = try? JSONDecoder().decode(
+                [String: [SessionEntry]].self, from: data)
+            {
+                entries = decoded
+            } else if let old = try? JSONDecoder().decode(
+                [String: SessionEntry].self, from: data)
+            {
+                // Pre-multi-session shape: one entry per target.
+                entries = old.mapValues { [$0] }
+            }
         }
-        if let decoded = try? JSONDecoder().decode(
-            [String: [SessionEntry]].self, from: data)
+        if let data = UserDefaults.standard.data(forKey: Self.goalsKey),
+           let decoded = try? JSONDecoder().decode(
+            [String: Double].self, from: data)
         {
-            entries = decoded
-        } else if let old = try? JSONDecoder().decode(
-            [String: SessionEntry].self, from: data)
-        {
-            // Pre-multi-session shape: one entry per target.
-            entries = old.mapValues { [$0] }
+            goals = decoded
         }
     }
 
@@ -125,6 +135,23 @@ final class SessionStore: ObservableObject {
     private func save() {
         if let data = try? JSONEncoder().encode(entries) {
             UserDefaults.standard.set(data, forKey: Self.key)
+        }
+    }
+
+    // MARK: - Integration goals
+
+    /// Goal hours for a target, 0 when none is set.
+    func goalHours(for id: String) -> Double { goals[id] ?? 0 }
+
+    /// Set (or clear, with hours ≤ 0) a target's integration goal.
+    func setGoalHours(id: String, hours: Double) {
+        if hours <= 0 {
+            goals.removeValue(forKey: id)
+        } else {
+            goals[id] = hours
+        }
+        if let data = try? JSONEncoder().encode(goals) {
+            UserDefaults.standard.set(data, forKey: Self.goalsKey)
         }
     }
 }
