@@ -303,6 +303,7 @@ enum Planning {
         darkEnd: Date?,
         cloud: [WeatherService.HourSample]?,
         seeing: [WeatherService.SeeingSample]?,
+        dewSpread: Double?,
         moonIllumination: Double,
         waxing: Bool,
         rig: RigPreset,
@@ -336,6 +337,12 @@ enum Planning {
                          "transparency \(s.transparency)/8 (7Timer forecast)")
         } else {
             lines.append("Seeing: forecast unavailable")
+        }
+        if let d = dewSpread {
+            lines.append("Dew spread: \(String(format: "%.1f°C", d))" +
+                         (d < 1.5 ? " — heater on" : ""))
+        } else {
+            lines.append("Dew spread: forecast unavailable")
         }
         lines.append("")
         lines.append(usingList
@@ -399,6 +406,48 @@ enum Planning {
         let maxC = covers.max() ?? 0
         return String(format: "%.0f%% avg, %.0f%% max over next %dh",
                       avg, maxC, upcoming.count)
+    }
+
+    // MARK: - Session-log export (Markdown)
+
+    /// The imaged session log as Markdown, ready to paste into notes —
+    /// one section per target with dates, per-session exposure, notes,
+    /// and the running total. `nameFor` resolves catalogue ids to
+    /// display names (falls back to the id itself).
+    static func sessionLogMarkdown(sessions: SessionStore,
+                                   nameFor: (String) -> String,
+                                   now: Date) -> String
+    {
+        var lines = [String]()
+        lines.append("# Session log — \(Fmt.weekday.string(from: now))")
+        lines.append("")
+        let ids = sessions.entries.keys.sorted {
+            nameFor($0).localizedStandardCompare(nameFor($1))
+                == .orderedAscending
+        }
+        guard !ids.isEmpty else {
+            lines.append("No sessions logged yet.")
+            return lines.joined(separator: "\n") + "\n"
+        }
+        for id in ids {
+            let list = sessions.sessions(for: id)
+            let total = sessions.totalExposureMinutes(for: id)
+            lines.append("## \(nameFor(id)) — " +
+                         "\(Fmt.exposure(total)) over \(list.count) " +
+                         "night\(list.count == 1 ? "" : "s")")
+            for s in list {
+                var row = "- \(Fmt.dayMonth.string(from: s.dateImaged))"
+                if s.exposureMinutes > 0 {
+                    row += " · \(Fmt.exposure(s.exposureMinutes))"
+                }
+                if !s.notes.isEmpty {
+                    row += " · \(s.notes)"
+                }
+                lines.append(row)
+            }
+            lines.append("")
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Private helpers

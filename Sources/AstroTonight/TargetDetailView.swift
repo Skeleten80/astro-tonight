@@ -4,6 +4,7 @@ struct TargetDetailView: View {
     let target: RankedTarget
     @ObservedObject var store: TargetStore
     @ObservedObject var sessions: SessionStore
+    @ObservedObject var notifications: NotificationService
     let rig: RigPreset
 
     var body: some View {
@@ -11,6 +12,7 @@ struct TargetDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 header
                 thumbnailSection
+                finderSection
                 tonightSection
                     .padding(14)
                     .glassPanel()
@@ -72,6 +74,21 @@ struct TargetDetailView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Toggle observing list")
+                Button {
+                    Task {
+                        await notifications.toggleReminder(
+                            for: target.object.id)
+                    }
+                } label: {
+                    let on = notifications.notifyIDs
+                        .contains(target.object.id)
+                    Image(systemName: on ? "bell.fill" : "bell")
+                        .foregroundStyle(on ? .orange : .secondary)
+                        .font(.title3)
+                }
+                .buttonStyle(.borderless)
+                .help("Notify 30 min before this target's imaging window " +
+                      "opens (needs the master switch in Site settings)")
                 if let rank = store.targets.firstIndex(of: target) {
                     Text("#\(rank + 1) tonight")
                         .font(.title3)
@@ -110,11 +127,28 @@ struct TargetDetailView: View {
     private var thumbnailSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             sectionHeader("Preview · DSS2 Red")
-            ThumbnailView(object: target.object)
+            ThumbnailView(object: target.object, kind: .closeup)
                 .frame(width: 300, height: 300)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .glassPanel(radius: 10)
             Text("Digitized Sky Survey via NASA SkyView — cached after the " +
+                 "first view, needs internet.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Wide-field context for star-hopping: ~3° DSS2-color cutout from
+    /// CDS hips2fits, same disk cache (separate `-finder` file, shared
+    /// 200 MB cap) and the same quiet-failure behaviour as the preview.
+    private var finderSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionHeader("Finder · 3° DSS2 color")
+            ThumbnailView(object: target.object, kind: .finder)
+                .frame(width: 300, height: 300)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .glassPanel(radius: 10)
+            Text("Wide-field context for star-hopping — cached after the " +
                  "first view, needs internet.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -412,49 +446,108 @@ struct TargetDetailView: View {
 
 // MARK: - Session log section
 
-/// "Mark as imaged" + optional notes for one target. The enclosing
-/// `TargetDetailView` content carries `.id(target.id)`, so this view (and
-/// its `notesDraft` state) is recreated whenever the selection changes.
+/// Per-session logging for one target: each night gets its own entry
+/// with exposure minutes and optional notes, so multi-night integration
+/// builds up a running total. The enclosing `TargetDetailView` content
+/// carries `.id(target.id)`, so this view (and its drafts) is recreated
+/// whenever the selection changes.
 struct SessionLogSection: View {
     let targetID: String
     @ObservedObject var sessions: SessionStore
     @State private var notesDraft = ""
+    @State private var exposureDraft = 60.0
+
+    private var sessionCount: Int {
+        sessions.sessionCount(for: targetID)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Session log")
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            if let entry = sessions.entry(for: targetID) {
-                Text("Imaged \(Fmt.dayMonth.string(from: entry.dateImaged)) ✓")
+            if sessionCount > 0 {
+                Text("Total: " +
+                     "\(Fmt.exposure(sessions.totalExposureMinutes(for: targetID))) " +
+                     "over \(sessionCount) night\(sessionCount == 1 ? "" : "s")")
                     .font(.callout)
                     .foregroundStyle(.green)
-                TextField("Notes (optional)", text: $notesDraft, onCommit: {
-                    sessions.updateNotes(id: targetID, notes: notesDraft)
-                })
-                .textFieldStyle(.roundedBorder)
-                Button("Unmark as imaged") {
-                    sessions.unmark(id: targetID)
+                    .monospacedDigit()
+                ForEach(sessions.sessions(for: targetID)) { s in
+                    HStack(spacing: 8) {
+                        Text(Fmt.dayMonth.string(from: s.dateImaged))
+                            .monospacedDigit()
+                        Stepper(value: Binding(
+                            get: { s.exposureMinutes },
+                            set: { sessions.updateExposure(
+                                id: targetID, sessionID: s.sessionID,
+                                minutes: $0) }
+                        ), in: 0...600, step: 15) {
+                            Text(Fmt.exposure(s.exposureMinutes))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        .help("Edit this session's exposure")
+                        if !s.notes.isEmpty {
+                            Text(s.notes)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Button {
+                            sessions.removeSession(id: targetID,
+                                                   sessionID: s.sessionID)
+                        } label: {
+                            Image(systemName: "xmark.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Delete this session")
+                    }
+                    .font(.callout)
                 }
-                .buttonStyle(.link)
-            } else {
-                Button("Mark as imaged") {
-                    sessions.markImaged(id: targetID)
+                Divider()
+            }
+            HStack {
+                Text("Exposure")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Stepper(value: $exposureDraft, in: 0...600, step: 15) {
+                    Text(Fmt.exposure(exposureDraft))
+                        .monospacedDigit()
                 }
             }
+            .font(.callout)
+            TextField("Notes (optional)", text: $notesDraft)
+                .textFieldStyle(.roundedBorder)
+            Button("Log session") {
+                sessions.logSession(
+                    id: targetID,
+                    notes: notesDraft.trimmingCharacters(
+                        in: .whitespacesAndNewlines),
+                    exposureMinutes: exposureDraft)
+                notesDraft = ""
+            }
         }
-        .onAppear { notesDraft = sessions.entry(for: targetID)?.notes ?? "" }
     }
 }
 
 // MARK: - DSS thumbnail
 
-/// On-demand Digitized Sky Survey preview. Fetches once per target
+/// On-demand Digitized Sky Survey imagery. Fetches once per target
 /// (disk-cached by `ThumbnailService`); `.task(id:)` re-triggers when the
 /// selection changes. Failures stay quiet — a subtle placeholder, never
 /// an error state — so the rest of the detail view is never blocked.
 struct ThumbnailView: View {
+    enum Kind {
+        /// 300×300 DSS2-Red close-up (NASA SkyView).
+        case closeup
+        /// ~3° DSS2-color wide field (CDS hips2fits), for star-hopping.
+        case finder
+    }
+
     let object: CatalogObject
+    let kind: Kind
     @State private var image: PlatformImage? = nil
     @State private var failed = false
 
@@ -477,10 +570,17 @@ struct ThumbnailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: object.id) {
+        .task(id: "\(object.id)-\(kind)") {
             image = nil
             failed = false
-            if let data = await ThumbnailService.data(for: object) {
+            let data: Data?
+            switch kind {
+            case .closeup:
+                data = await ThumbnailService.data(for: object)
+            case .finder:
+                data = await ThumbnailService.finderData(for: object)
+            }
+            if let data {
                 image = platformImage(from: data)
             } else {
                 failed = true

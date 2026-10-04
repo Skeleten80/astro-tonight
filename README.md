@@ -114,9 +114,15 @@ navigation stack on iPhone automatically.
   multiply layer over the whole app so it doesn't ruin your dark
   adaptation at the scope. Persisted between launches. (v1 is an
   overlay, not a full theme swap.)
-- **Session log** — "Mark as imaged" in the detail view, with optional
-  notes; imaged targets get a green "✓ Oct 3" badge in the list, and a
-  "Hide imaged" toggle filters them out. Saved between launches.
+- **Session log** — "Log session" in the detail view records each night
+  separately, with exposure minutes (editable per session) and optional
+  notes; the detail view shows the running total ("3.2h over 4 nights"),
+  imaged targets get a green "✓ Oct 3" badge in the list, and a "Hide
+  imaged" toggle filters them out. Saved between launches; old
+  single-entry data migrates automatically.
+- **Session-log export** — "Copy session log" (next to "Copy observing
+  plan") copies the whole imaged log as Markdown: per target the total
+  integration and nights, then each session's date, exposure, and notes.
 - **Cloud cover** — the sidebar shows an Open-Meteo forecast strip
   (current hour + next 6, colour-coded) next to the dark-hours line.
   Free, no API key — but it needs internet, and it's a forecast, not a
@@ -160,6 +166,24 @@ navigation stack on iPhone automatically.
   separation + verdict, framing vs the selected rig, and imaged ✓
   status. Uses the observing list when it's non-empty, otherwise the top
   20 ranked — stated in the output.
+- **Window-open notifications** — tap the bell in a target's detail view
+  to opt in, flip the "Window reminders" master switch in Site settings,
+  and the app notifies you 30 minutes before that target's imaging
+  window opens (max 8 pending, only windows within 48 h). Scheduled
+  while the app runs — open it once in the evening; there's no background
+  refresh.
+- **Dew-point spread** — the sidebar shows temperature-minus-dew-point
+  from the Open-Meteo forecast next to the cloud strip: red under 1.5 °C
+  ("heater on"), orange under 3 °C, green otherwise. Also in the
+  observing plan header.
+- **Finder chart** — below the DSS close-up, the detail view shows a ~3°
+  DSS2-color wide-field cutout (CDS hips2fits, free, no key) for
+  star-hopping context. Same disk cache as the preview (separate
+  `-finder` file, shared 200 MB cap), same quiet failure.
+- **Month moon planner** — a horizontally scrolling 30-day strip in the
+  sidebar with each night's moon illumination % and a phase dot (dark at
+  new moon, bright at full); nights under 25% go green so you can plan
+  broadband weekends at a glance. Pure AstroMath, no networking.
 - **Site settings** — latitude/longitude steppers (default Stratford,
   ON), or **Use my location** to set the site from the Mac's location
   services (needs the bundled `.app`, see above); minimum-altitude slider
@@ -205,7 +229,15 @@ the detail view crossfades between targets.
   not a measurement of your sky.
 - DSS previews need internet and are **cached per target** (~200 MB
   cap); SkyView is a best-effort public service, so a missing preview
-  is normal, not a bug.
+  is normal, not a bug. The finder chart is the same deal via CDS
+  hips2fits (a separate free public service).
+- The dew-point spread is an Open-Meteo **forecast**, not a measurement
+  — if the corrector plate is already wet, the forecast was wrong.
+- Window reminders are **scheduled while the app runs** (no background
+  refresh): open the app in the evening and it queues the night's
+  reminders. On macOS they need the real `.app` bundle
+  (`scripts/build-app.sh`); on iOS they need the app installed (not the
+  simulator).
 - The "image this now" top pick is a **heuristic score** (rank position +
   window-open bonus + cloud penalty + moon penalty + small seeing
   penalty), documented in `Planning.topPick`. It points at the detail

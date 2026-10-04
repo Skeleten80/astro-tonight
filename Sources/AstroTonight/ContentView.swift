@@ -28,6 +28,12 @@ enum Fmt {
 
     static func deg(_ v: Double) -> String { String(format: "%.1f°", v) }
     static func hours(_ v: Double) -> String { String(format: "%.1fh", v) }
+
+    /// "45m" or "3.2h" for exposure minutes.
+    static func exposure(_ minutes: Double) -> String {
+        if minutes >= 60 { return String(format: "%.1fh", minutes / 60) }
+        return String(format: "%.0fm", minutes)
+    }
     static func mag(_ v: Double?) -> String {
         guard let v else { return "—" }
         return String(format: "%.1f", v)
@@ -70,6 +76,7 @@ struct ContentView: View {
     @StateObject private var weather = WeatherService()
     @StateObject private var horizonStore = HorizonStore()
     @StateObject private var rigStore = RigStore()
+    @StateObject private var notifications = NotificationService()
     @AppStorage("AstroTonight.nightVision") private var nightVision = false
     @State private var selection: RankedTarget?
     @State private var searchText = ""
@@ -88,6 +95,7 @@ struct ContentView: View {
                 if let target = selection {
                     TargetDetailView(target: target, store: store,
                                      sessions: sessions,
+                                     notifications: notifications,
                                      rig: rigStore.selected)
                 } else {
                     ContentUnavailableView(
@@ -160,6 +168,28 @@ struct ContentView: View {
             // Re-rank against the new horizon, debounced like the sliders.
             store.scheduleRecompute()
         }
+        .onChange(of: store.targets) { _, _ in scheduleNotifications() }
+        .onChange(of: notifications.notifyIDs) { _, _ in
+            scheduleNotifications()
+        }
+        .onChange(of: notifications.masterEnabled) { _, _ in
+            scheduleNotifications()
+        }
+        .onChange(of: notifications.isAuthorized) { _, _ in
+            scheduleNotifications()
+        }
+    }
+
+    /// (Re-)schedule window-open reminders for opted-in targets. Called
+    /// whenever the ranking, the opt-ins, or the master switch changes —
+    /// the service itself cancels stale requests first.
+    private func scheduleNotifications() {
+        notifications.refresh(ranked: store.targets,
+                              lat: store.settings.lat,
+                              lon: store.settings.lon,
+                              minAlt: store.settings.minAlt,
+                              horizon: store.horizonProfile,
+                              now: store.now)
     }
 
     // MARK: - Sidebar
@@ -260,6 +290,7 @@ struct ContentView: View {
                             darkEnd: store.darkEnd,
                             cloud: cloudSamples,
                             seeing: seeingSamples,
+                            dewSpread: currentDew?.spread,
                             moonIllumination: store.moon?.illumination ?? 0,
                             waxing: store.moon?.waxing ?? false,
                             rig: rigStore.selected,
@@ -271,6 +302,20 @@ struct ContentView: View {
                     .buttonStyle(.link)
                     .help("Copy a Markdown observing plan for tonight")
                     .disabled(store.targets.isEmpty)
+                    Button {
+                        copyToClipboard(Planning.sessionLogMarkdown(
+                            sessions: sessions,
+                            nameFor: { id in
+                                store.targets.first(where: { $0.id == id })
+                                    ?.object.name ?? id
+                            },
+                            now: store.now))
+                    } label: {
+                        Label("Copy session log", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.link)
+                    .help("Copy the imaged session log as Markdown")
+                    .disabled(sessions.entries.isEmpty)
                 }
                 .font(.callout)
 
@@ -287,6 +332,10 @@ struct ContentView: View {
 
                 seeingRow
 
+                dewRow
+
+                MoonMonthView(now: store.now)
+
                 DisclosureGroup("Site · \(SiteSettings.siteName)", isExpanded: $showSettings) {
                     siteControls
                 }
@@ -299,6 +348,7 @@ struct ContentView: View {
         .navigationDestination(for: RankedTarget.self) { target in
             TargetDetailView(target: target, store: store,
                              sessions: sessions,
+                             notifications: notifications,
                              rig: rigStore.selected)
         }
     }
@@ -498,6 +548,16 @@ struct ContentView: View {
             rigControls
             Divider()
             HorizonEditor(horizon: horizonStore)
+            Divider()
+            Toggle("Window reminders", isOn: $notifications.masterEnabled)
+            if notifications.masterEnabled {
+                Text(notifications.isAuthorized
+                    ? "Tap the bell in a target's detail view to opt in — " +
+                      "you'll be notified 30 min before its window opens."
+                    : "Tap a target's bell to request notification permission.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Button("Reset to \(SiteSettings.siteName)") {
                 location.stop()
                 store.settings = SiteSettings()
@@ -707,6 +767,73 @@ struct ContentView: View {
         if seeing <= 2 { return .green }
         if seeing <= 5 { return .orange }
         return .red
+    }
+
+    // MARK: - Dew-point spread (Open-Meteo)
+
+    /// Cached dew-spread samples, if the weather service has them.
+    private var dewSamples: [WeatherService.DewSample]? {
+        if case .ready(let samples) = weather.dewState { return samples }
+        return nil
+    }
+
+    /// The dew-spread sample nearest now, or nil when the forecast isn't
+    /// in (nil = no sample within 90 minutes).
+    private var currentDew: WeatherService.DewSample? {
+        guard let samples = dewSamples else { return nil }
+        let nearest = samples.min(by: {
+            abs($0.date.timeIntervalSince(store.now))
+                < abs($1.date.timeIntervalSince(store.now))
+        })
+        guard let n = nearest,
+              abs(n.date.timeIntervalSince(store.now)) <= 5400
+        else { return nil }
+        return n
+    }
+
+    private var dewRow: some View {
+        Group {
+            switch weather.dewState {
+            case .idle, .loading:
+                Text("Dew spread —")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .failed:
+                Text("Dew forecast unavailable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .ready:
+                if let d = currentDew {
+                    HStack(spacing: 6) {
+                        Image(systemName: "drop")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("Dew spread " +
+                             "\(String(format: "%.1f°C", d.spread))")
+                            .foregroundStyle(dewColor(d.spread))
+                        if d.spread < 1.5 {
+                            Text("· heater on")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                    .font(.caption)
+                    .monospacedDigit()
+                } else {
+                    Text("Dew spread —")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .help("Temperature minus dew point (Open-Meteo forecast). Under " +
+              "about 1.5°C the SCT corrector plate will dew up — run the " +
+              "heater.")
+    }
+
+    private func dewColor(_ spread: Double) -> Color {
+        if spread < 1.5 { return .red }
+        if spread < 3 { return .orange }
+        return .green
     }
 
     private func copyToClipboard(_ s: String) {
@@ -941,6 +1068,72 @@ struct RigCustomForm: View {
             Text(unit)
                 .foregroundStyle(.secondary)
                 .frame(width: 30, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Month moon planner
+
+/// 30-day moon-illumination strip for planning around new moon. Pure
+/// AstroMath (the same illumination function behind the toolbar chip) —
+/// no networking, effectively instant.
+struct MoonMonthView: View {
+    let now: Date
+
+    private struct DayMoon: Hashable {
+        let date: Date
+        let illumination: Double
+    }
+
+    private static let dayNumber: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "d"
+        return f
+    }()
+
+    private var days: [DayMoon] {
+        (0..<30).map { d in
+            let date = Calendar.current.startOfDay(for: now)
+                .addingTimeInterval(Double(d) * 86400 + 12 * 3600)
+            let illum = AstroMath.moonIllumination(
+                julianDate: AstroMath.julianDate(date)).fraction
+            return DayMoon(date: date, illumination: illum)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Moon · next 30 days")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(days, id: \.date) { day in
+                        VStack(spacing: 3) {
+                            // Phase dot: dark at new moon, bright at full.
+                            Circle()
+                                .fill(Color.white.opacity(
+                                    0.12 + 0.88 * day.illumination))
+                                .frame(width: 14, height: 14)
+                                .overlay(Circle().stroke(
+                                    Color.secondary.opacity(0.4),
+                                    lineWidth: 0.5))
+                            Text("\(Int(day.illumination * 100))%")
+                                .foregroundStyle(day.illumination < 0.25
+                                    ? .green : .secondary)
+                            Text(Self.dayNumber.string(from: day.date))
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.caption2)
+                        .monospacedDigit()
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            Text("Green % = dark nights (< 25% illuminated) — plan " +
+                 "broadband targets there.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 }

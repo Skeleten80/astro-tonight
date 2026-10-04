@@ -25,13 +25,30 @@ enum ThumbnailService {
     /// JPEG bytes for the target's DSS2-Red cutout: disk cache first,
     /// SkyView on a miss. Nil on any failure (offline, bad status, ...).
     static func data(for object: CatalogObject) async -> Data? {
-        let url = cachedURL(for: object.id)
-        if let data = try? Data(contentsOf: url), !data.isEmpty {
+        await fetchAndCache(
+            cacheURL: cachedURL(for: object.id),
+            remoteURL: skyViewURL(ra: object.ra, dec: object.dec))
+    }
+
+    /// Wide-field finder chart: ~3° DSS2-color cutout from CDS hips2fits
+    /// (free, no key; URL shape verified live via curl — HTTP 200,
+    /// image/jpeg, 600×600). Same cache directory (shares the 200 MB cap)
+    /// with a `-finder` filename suffix. Nil on any failure.
+    static func finderData(for object: CatalogObject) async -> Data? {
+        await fetchAndCache(
+            cacheURL: cachedURL(for: object.id + "-finder"),
+            remoteURL: finderURL(ra: object.ra, dec: object.dec))
+    }
+
+    /// Disk cache first, remote download on a miss (validating the bytes
+    /// decode as an image before caching). Shared by both previews.
+    private static func fetchAndCache(cacheURL: URL,
+                                     remoteURL: URL?) async -> Data?
+    {
+        if let data = try? Data(contentsOf: cacheURL), !data.isEmpty {
             return data
         }
-        guard let remote = skyViewURL(ra: object.ra, dec: object.dec) else {
-            return nil
-        }
+        guard let remote = remoteURL else { return nil }
         do {
             let req = URLRequest(url: remote, timeoutInterval: 30)
             let (data, response) = try await URLSession.shared.data(for: req)
@@ -40,9 +57,9 @@ enum ThumbnailService {
                   platformImage(from: data) != nil
             else { return nil }
             try? FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
+                at: cacheURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true)
-            try? data.write(to: url, options: .atomic)
+            try? data.write(to: cacheURL, options: .atomic)
             Task.detached(priority: .background) { evictIfNeeded() }
             return data
         } catch {
@@ -60,6 +77,21 @@ enum ThumbnailService {
             "?Position=\(String(format: "%.4f", ra))," +
             "\(String(format: "%.4f", dec))" +
             "&Survey=DSS2%20Red&Pixels=300&Return=JPEG")
+    }
+
+    /// CDS hips2fits wide-field URL, curl-verified shape:
+    /// `.../hips2fits?hips=CDS/P/DSS2/color&ra=202.4700&dec=47.1953
+    ///  &fov=3.0&width=600&height=600&projection=SIN&coordsys=icrs
+    ///  &format=jpg`. RA/Dec are plain decimal degrees, so no further
+    /// encoding is needed (the slashes in the hips id are fine raw in
+    /// the query string — verified live).
+    private static func finderURL(ra: Double, dec: Double) -> URL? {
+        URL(string: "https://alasky.u-strasbg.fr/hips-image-services/" +
+            "hips2fits?hips=CDS/P/DSS2/color" +
+            "&ra=\(String(format: "%.4f", ra))" +
+            "&dec=\(String(format: "%.4f", dec))" +
+            "&fov=3.0&width=600&height=600" +
+            "&projection=SIN&coordsys=icrs&format=jpg")
     }
 
     /// Drop oldest files first when the cache exceeds the cap.

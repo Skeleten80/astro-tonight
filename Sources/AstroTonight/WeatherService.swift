@@ -31,6 +31,7 @@ final class WeatherService: ObservableObject {
     func refresh(lat: Double, lon: Double) {
         refreshCloud(lat: lat, lon: lon)
         refreshSeeing(lat: lat, lon: lon)
+        refreshDew(lat: lat, lon: lon)
     }
 
     // MARK: - Open-Meteo cloud cover
@@ -206,6 +207,106 @@ final class WeatherService: ObservableObject {
                     date: base.addingTimeInterval(Double(p.timepoint) * 3600),
                     seeing: p.seeing,
                     transparency: p.transparency)
+            }
+            return samples.isEmpty ? nil : samples
+        } catch {
+            return nil
+        }
+    }
+}
+
+// MARK: - Open-Meteo dew-point spread (feature split for readability)
+
+extension WeatherService {
+    /// One hourly temperature/dew-point sample, reduced to the spread.
+    struct DewSample: Equatable, Hashable {
+        let date: Date
+        /// Temperature minus dew point, °C. Small = the corrector plate
+        /// is about to dew up.
+        let spread: Double
+    }
+
+    enum DewState: Equatable {
+        case idle
+        case loading
+        case ready([DewSample])
+        case failed
+    }
+
+    @Published private(set) var dewState: DewState = .idle
+
+    private var dewKey = ""
+    private var dewGeneration = 0
+
+    /// Refresh the dew-point spread forecast (same Open-Meteo request
+    /// family as cloud cover: free, no key, a forecast not a
+    /// measurement). Generation-guarded like the other refreshes.
+    private func refreshDew(lat: Double, lon: Double) {
+        let key = String(format: "%.2f,%.2f", lat, lon)
+        if key == dewKey, case .ready = dewState { return }
+        dewKey = key
+        dewGeneration += 1
+        let gen = dewGeneration
+        dewState = .loading
+        Task {
+            let samples = await Self.fetchDew(lat: lat, lon: lon)
+            await MainActor.run {
+                guard gen == self.dewGeneration else { return }
+                if let samples {
+                    self.dewState = .ready(samples)
+                } else {
+                    self.dewState = .failed
+                }
+            }
+        }
+    }
+
+    private struct DewResponse: Decodable {
+        struct Hourly: Decodable {
+            let time: [String]
+            let temperature_2m: [Double]
+            let dew_point_2m: [Double]
+        }
+        let utc_offset_seconds: Int
+        let hourly: Hourly
+    }
+
+    private static func fetchDew(lat: Double, lon: Double) -> [DewSample]? {
+        var comps = URLComponents(
+            string: "https://api.open-meteo.com/v1/forecast")!
+        comps.queryItems = [
+            URLQueryItem(name: "latitude", value: String(lat)),
+            URLQueryItem(name: "longitude", value: String(lon)),
+            URLQueryItem(name: "hourly",
+                         value: "temperature_2m,dew_point_2m"),
+            URLQueryItem(name: "forecast_days", value: "2"),
+            URLQueryItem(name: "timezone", value: "auto"),
+        ]
+        guard let url = comps.url else { return nil }
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                return nil
+            }
+            let decoded = try JSONDecoder().decode(DewResponse.self,
+                                                   from: data)
+            // Times come back as site-local "yyyy-MM-dd'T'HH:mm".
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd'T'HH:mm"
+            fmt.timeZone = TimeZone(secondsFromGMT: decoded.utc_offset_seconds)
+            var samples = [DewSample]()
+            let n = min(decoded.hourly.time.count,
+                        decoded.hourly.temperature_2m.count,
+                        decoded.hourly.dew_point_2m.count)
+            samples.reserveCapacity(n)
+            for i in 0..<n {
+                guard let d = fmt.date(from: decoded.hourly.time[i]) else {
+                    continue
+                }
+                samples.append(DewSample(
+                    date: d,
+                    spread: decoded.hourly.temperature_2m[i]
+                        - decoded.hourly.dew_point_2m[i]))
             }
             return samples.isEmpty ? nil : samples
         } catch {
