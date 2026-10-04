@@ -121,6 +121,16 @@ struct ContentView: View {
     @State private var checklistDraft = ""
     @State private var importAlert: ImportAlert?
 
+    /// Shown in the detail pane when nothing is selected. Extracted from
+    /// `body` so the type-checker doesn't have to chew through the whole
+    /// NavigationSplitView expression at once.
+    private var emptyDetailView: some View {
+        ContentUnavailableView(
+            "Select a target",
+            systemImage: "telescope",
+            description: Text("Ranked for your site — same ordering as `astrocapture tonight`."))
+    }
+
     var body: some View {
         ZStack {
             StarfieldView()
@@ -134,10 +144,7 @@ struct ContentView: View {
                                      timer: sessionTimer,
                                      rig: rigStore.selected)
                 } else {
-                    ContentUnavailableView(
-                        "Select a target",
-                        systemImage: "telescope",
-                        description: Text("Ranked for your site — same ordering as `astrocapture tonight`."))
+                    emptyDetailView
                 }
             }
             .navigationTitle("Tonight's Targets")
@@ -1192,10 +1199,9 @@ struct ContentView: View {
 
     /// CSV import result → user-facing alert. `addCustomObjects`
     /// re-ranks, so imported targets appear immediately.
-    private func handleImport(_ result: Result<[URL], Error>) {
+    private func handleImport(_ result: Result<URL, Error>) {
         switch result {
-        case .success(let urls):
-            guard let url = urls.first else { return }
+        case .success(let url):
             let access = url.startAccessingSecurityScopedResource()
             defer {
                 if access { url.stopAccessingSecurityScopedResource() }
