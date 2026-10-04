@@ -935,7 +935,7 @@ struct AltitudeChartView: View {
         for i in 1..<shown {
             curve.addLine(to: CGPoint(x: x(i), y: y(profile[i])))
         }
-        var fill = Path(curve)
+        var fill = curve
         fill.addLine(to: CGPoint(x: x(shown - 1), y: y(0)))
         fill.addLine(to: CGPoint(x: x(0), y: y(0)))
         fill.closeSubpath()
@@ -985,12 +985,16 @@ struct AltitudeChartView: View {
             let label = Text("\(Fmt.time.string(from: date)) · \(Fmt.deg(alt))")
                 .font(.caption)
                 .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(.ultraThinMaterial,
-                            in: RoundedRectangle(cornerRadius: 6))
-            ctx.draw(label, at: CGPoint(x: min(max(xc, 70), size.width - 70),
-                                       y: 14))
+            let lp = CGPoint(x: min(max(xc, 70), size.width - 70), y: 14)
+            // Pill backdrop behind the label: GraphicsContext can't fill a
+            // path with a material, so a dark translucent rounded rect
+            // stands in for the glass pill. (ctx.draw only takes Text —
+            // padding/background modifiers change the type and won't compile.)
+            let pill = Path(roundedRect: CGRect(x: lp.x - 78, y: lp.y - 12,
+                                                width: 156, height: 24),
+                            cornerRadius: 7)
+            ctx.fill(pill, with: .color(.black.opacity(0.55)))
+            ctx.draw(label, at: lp)
         }
     }
 }
