@@ -1,9 +1,10 @@
-# AstroTonight — "what's worth imaging tonight" (Xcode, macOS)
+# AstroTonight — "what's worth imaging tonight" (macOS + iOS/iPadOS)
 
-A native macOS companion for AstroCapture: it loads the same vendored
-5,045-object night-sky catalogue (`catalog.json`, OpenNGC / CC-BY-SA-4.0)
-and ranks what's best placed tonight for your site — no Python, no
-terminal, just a list you can browse with coffee.
+A native companion for AstroCapture across Apple platforms: it loads the
+same vendored 5,045-object night-sky catalogue (`catalog.json`, OpenNGC /
+CC-BY-SA-4.0) and ranks what's best placed tonight for your site — no
+Python, no terminal, just a list you can browse with coffee. One
+universal iOS target covers iPhone and iPad.
 
 ## Open it
 
@@ -38,6 +39,32 @@ to the manual latitude/longitude steppers — nothing breaks.
 
 Quick ⌘R testing in Xcode works fine for everything *except* the
 location button.
+
+## iOS / iPadOS
+
+The same codebase builds as a universal iOS app (iPhone + iPad, iOS 17+)
+— all logic and features are shared, including the imaging windows,
+cloud + seeing forecasts, DSS thumbnails, session log, and exports.
+The platform seams (clipboard, hover, location-settings links) are
+centralised in `Sources/AstroTonight/Platform.swift`.
+
+No `.xcodeproj` is checked in (a hand-written one can't be verified
+without Xcode). The 5-minute iMac path: **File → New → Project → iOS
+App**, delete the template's `ContentView.swift`/`*App.swift` (name
+collision with ours), drag in `Sources/AstroTonight` (with
+`Resources/catalog.json` — the code falls back to `Bundle.main` outside
+SwiftPM), set the iOS 17 deployment target, add
+`NSLocationWhenInUseUsageDescription` to the target's Info tab, sign
+with your Apple ID, and ⌘R onto the device. Full beginner-proof steps
+— including the signing reality (free Apple ID = 7-day certificates,
+re-run weekly; $99/yr Developer Program = TestFlight and permanent
+installs) — are in [`docs/iOS-setup.md`](docs/iOS-setup.md).
+
+What differs on iOS: copy buttons use `UIPasteboard`; the hover
+lift/scrubber are macOS-only (star toggles are always visible, the
+chart scrubs by finger drag); the location-settings link opens the
+app's page in the Settings app; `NavigationSplitView` collapses to a
+navigation stack on iPhone automatically.
 
 ## What you get
 
@@ -188,8 +215,10 @@ the detail view crossfades between targets.
 - Night-vision mode is a **v1 overlay** (red multiply layer), not a
   full red theme — bright white text still shows through dimmed and
   reddened, so keep the screen brightness low at the scope.
-- Written against the macOS 14 SDK. Like the other Xcode targets in this
-  workspace, it **has not been compile-checked on Linux** (there is no
-  Swift toolchain on the build VM, and SwiftUI is macOS-only) — Xcode on
-  the iMac is the real test. If it reports a build error, that's a real
-  bug; report it and it gets fixed.
+- Written against the macOS 14 / iOS 17 SDKs. Like the other Xcode
+  targets in this workspace, it **has not been compile-checked on Linux**
+  (there is no Swift toolchain on the build VM, and SwiftUI is
+  Apple-only) — the iOS port in particular is hand-ported without a
+  compiler, so Xcode on the iMac is the real test **for both platforms**
+  now. If it reports a build error, that's a real bug; report it and it
+  gets fixed.

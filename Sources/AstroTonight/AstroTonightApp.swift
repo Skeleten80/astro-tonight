@@ -6,6 +6,8 @@ struct AstroTonightApp: App {
         WindowGroup {
             ContentView()
         }
+        #if os(macOS)
         .windowResizability(.contentMinSize)
+        #endif
     }
 }

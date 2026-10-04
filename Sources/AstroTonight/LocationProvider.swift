@@ -1,5 +1,5 @@
-import AppKit
 import CoreLocation
+import Foundation
 
 /// Device location via Apple's location services.
 ///
@@ -41,8 +41,7 @@ final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDeleg
     /// Ask for a fix. Prompts for authorization on first use.
     func request() {
         guard CLLocationManager.locationServicesEnabled() else {
-            state = .failed("Location Services are turned off on this Mac " +
-                            "(System Settings → Privacy & Security → Location Services).")
+            state = .failed(PlatformSystem.locationServicesOffMessage)
             return
         }
         switch manager.authorizationStatus {
@@ -65,11 +64,7 @@ final class LocationProvider: NSObject, ObservableObject, CLLocationManagerDeleg
     }
 
     func openLocationSettings() {
-        if let url = URL(string: "x-apple.systempreferences:" +
-            "com.apple.preference.security?Privacy_LocationServices")
-        {
-            NSWorkspace.shared.open(url)
-        }
+        PlatformSystem.openLocationSettings()
     }
 
     private func startFix() {

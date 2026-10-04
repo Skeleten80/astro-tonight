@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct TargetDetailView: View {
@@ -407,9 +406,7 @@ struct TargetDetailView: View {
     }
 
     private func copyToClipboard(_ s: String) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(s, forType: .string)
+        PlatformPasteboard.copy(s)
     }
 }
 
@@ -458,13 +455,13 @@ struct SessionLogSection: View {
 /// an error state — so the rest of the detail view is never blocked.
 struct ThumbnailView: View {
     let object: CatalogObject
-    @State private var image: NSImage? = nil
+    @State private var image: PlatformImage? = nil
     @State private var failed = false
 
     var body: some View {
         Group {
             if let image {
-                Image(nsImage: image)
+                Image(platformImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             } else if failed {
@@ -484,7 +481,7 @@ struct ThumbnailView: View {
             image = nil
             failed = false
             if let data = await ThumbnailService.data(for: object) {
-                image = NSImage(data: data)
+                image = platformImage(from: data)
             } else {
                 failed = true
             }
@@ -554,12 +551,14 @@ struct AltitudeChartView: View {
                 Canvas { ctx, size in
                     draw(in: ctx, size: size)
                 }
+                #if os(macOS)
                 .onContinuousHover { phase in
                     switch phase {
                     case .active(let location): hoverX = location.x
                     case .ended: hoverX = nil
                     }
                 }
+                #endif
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { hoverX = $0.location.x }

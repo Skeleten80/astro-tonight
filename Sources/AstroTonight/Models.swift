@@ -26,8 +26,16 @@ struct CatalogObject: Decodable, Identifiable, Hashable {
     }
 
     static func load() throws -> [CatalogObject] {
-        guard let url = Bundle.module.url(forResource: "catalog",
-                                          withExtension: "json") else {
+        // SwiftPM builds use the processed-resources bundle; when the
+        // sources are dragged into a plain Xcode iOS project (see
+        // docs/iOS-setup.md) the catalog lands in the main bundle.
+        #if SWIFT_PACKAGE
+        let bundle = Bundle.module
+        #else
+        let bundle = Bundle.main
+        #endif
+        guard let url = bundle.url(forResource: "catalog",
+                                   withExtension: "json") else {
             throw CatalogError.missingResource
         }
         let data = try Data(contentsOf: url)

@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 
 /// DSS survey cutouts from NASA SkyView (free, no key), cached on disk.
@@ -38,7 +37,7 @@ enum ThumbnailService {
             let (data, response) = try await URLSession.shared.data(for: req)
             guard (response as? HTTPURLResponse)?.statusCode == 200,
                   !data.isEmpty,
-                  NSImage(data: data) != nil
+                  platformImage(from: data) != nil
             else { return nil }
             try? FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),

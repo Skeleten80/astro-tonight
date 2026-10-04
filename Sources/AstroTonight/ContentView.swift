@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 // MARK: - Formatters
@@ -136,7 +135,9 @@ struct ContentView: View {
             }
             .searchable(text: $searchText, placement: .sidebar,
                         prompt: "Search name or catalogue ID")
+            #if os(macOS)
             .frame(minWidth: 960, minHeight: 620)
+            #endif
             .onChange(of: location.coordinate) { _, coord in
                 guard let coord else { return }
                 store.settings.lat = coord.latitude
@@ -403,7 +404,7 @@ struct ContentView: View {
                     Label("Use my location", systemImage: "location.fill")
                 }
                 .buttonStyle(.link)
-                .help("Set the site from this Mac's location services")
+                .help(PlatformSystem.useLocationHelp)
             case .requesting:
                 HStack(spacing: 6) {
                     ProgressView()
@@ -425,8 +426,7 @@ struct ContentView: View {
                 }
             case .denied:
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Location access denied — set the site manually, " +
-                         "or allow it in System Settings.")
+                    Text(PlatformSystem.locationDeniedHint)
                         .foregroundStyle(.orange)
                     Button("Open Location Settings") {
                         location.openLocationSettings()
@@ -710,9 +710,7 @@ struct ContentView: View {
     }
 
     private func copyToClipboard(_ s: String) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(s, forType: .string)
+        PlatformPasteboard.copy(s)
     }
 }
 
@@ -768,7 +766,9 @@ struct TargetRow: View {
             .monospacedDigit()
         }
         .padding(.vertical, 3)
+        #if os(macOS)
         .onHover { hovering = $0 }
+        #endif
         .scaleEffect(hovering ? 1.015 : 1)
         .brightness(hovering ? 0.07 : 0)
         .animation(.easeOut(duration: 0.15), value: hovering)
