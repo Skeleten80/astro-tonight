@@ -149,6 +149,11 @@ final class WeatherService: ObservableObject {
     private var seeingFetchedAt = Date.distantPast
     private var seeingGeneration = 0
 
+    @Published private(set) var dewState: DewState = .idle
+
+    private var dewKey = ""
+    private var dewGeneration = 0
+
     /// Approximate plain-language label for the 7Timer seeing scale.
     static func seeingLabel(_ seeing: Int) -> String {
         switch seeing {
@@ -207,7 +212,7 @@ final class WeatherService: ObservableObject {
         let speed: Double
     }
 
-    private static func fetchSeeing(lat: Double, lon: Double)
+    private static func fetchSeeing(lat: Double, lon: Double) async
         -> [SeeingSample]?
     {
         var comps = URLComponents(
@@ -266,11 +271,6 @@ extension WeatherService {
         case failed
     }
 
-    @Published private(set) var dewState: DewState = .idle
-
-    private var dewKey = ""
-    private var dewGeneration = 0
-
     /// Refresh the dew-point spread forecast (same Open-Meteo request
     /// family as cloud cover: free, no key, a forecast not a
     /// measurement). Generation-guarded like the other refreshes.
@@ -304,7 +304,7 @@ extension WeatherService {
         let hourly: Hourly
     }
 
-    private static func fetchDew(lat: Double, lon: Double) -> [DewSample]? {
+    private static func fetchDew(lat: Double, lon: Double) async -> [DewSample]? {
         var comps = URLComponents(
             string: "https://api.open-meteo.com/v1/forecast")!
         comps.queryItems = [
