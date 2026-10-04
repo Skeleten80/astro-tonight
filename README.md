@@ -189,6 +189,28 @@ navigation stack on iPhone automatically.
   services (needs the bundled `.app`, see above); minimum-altitude slider
   (default 30°, like the CLI), and how many targets to list. Saved
   between launches.
+- **Tonight's schedule** — a Gantt-style timeline of the night: the dark
+  window as a background band, one row per target with its imaging
+  window as a tappable bar (tapping selects the target), and a "now"
+  line. Shows the observing list, or the top 8 ranked targets when the
+  list is empty.
+- **First-run onboarding** — a 3-step setup (location → rig → minimum
+  altitude) on first launch, so nobody else opens the app on Stratford
+  with a 6SE. Skippable; existing installs see it once.
+- **Session timer** — "Start imaging" on a target runs a live timer;
+  "Stop & log" files the elapsed time as a session. One timer at a time
+  (switching asks to log or discard); it survives app restarts.
+- **Pre-session checklist** — dew heater, battery, GoTo alignment…,
+  tappable check circles with your own add/remove/reset. Readable under
+  night-vision mode at the scope.
+- **Custom target import** — import your own targets from a CSV file
+  (`name, ra, dec` in decimal degrees; optional `type, mag,
+  size_arcmin`). They rank, chart, and export like catalogue objects,
+  with their own filter chip and a management list in Site settings.
+- **App Store readiness** — `PrivacyInfo.xcprivacy` (UserDefaults,
+  `CA92.1`; add it to the Xcode target per `docs/iOS-setup.md`), iOS
+  share sheets next to the copy buttons, a °F toggle, a support link,
+  and accessibility labels on the icon-only controls.
 
 ## Ranking semantics
 
@@ -254,3 +276,14 @@ the detail view crossfades between targets.
   compiler, so Xcode on the iMac is the real test **for both platforms**
   now. If it reports a build error, that's a real bug; report it and it
   gets fixed.
+- The onboarding sheet appears **once on existing installs** too (the
+  flag is new) — "Skip" keeps your current settings.
+- The session timer has **no background execution**: elapsed time is
+  wall-clock from the persisted start date, which is the correct
+  behaviour — it resumes accurately after a restart.
+- CSV import needs **decimal degrees** for RA/Dec; bad rows are skipped
+  and counted, never silently half-imported.
+- `PrivacyInfo.xcprivacy` must be **added to the Xcode target** (see
+  `docs/iOS-setup.md`) or App Store Connect will flag the upload. The
+  thumbnail cache deliberately avoids file-timestamp APIs so UserDefaults
+  (`CA92.1`) is the only declared category.

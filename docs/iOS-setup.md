@@ -60,6 +60,16 @@ than none. Creating the project on the iMac takes about five minutes.
    pick it in the run-destination menu next to the ▶ button, press **⌘R**.
    First launch takes a moment while the catalogue ranks (~5,000 objects).
 
+### Privacy manifest
+
+The repo root contains `PrivacyInfo.xcprivacy`, declaring the app's use
+of the UserDefaults API (required-reason `CA92.1` — all settings, the
+session log, the observing list, and the thumbnail cache manifest live
+there). Drag it into the Xcode project navigator and make sure **Add to
+targets: AstroTonight** is checked, same as the sources. App Store
+Connect flags uploads that touch a required-reason API without one, so
+don't skip this before TestFlight.
+
 ## Signing reality — read before investing time
 
 - **Free Apple ID:** sideloading works, but the provisioning certificate

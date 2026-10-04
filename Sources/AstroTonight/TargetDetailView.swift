@@ -5,6 +5,10 @@ struct TargetDetailView: View {
     @ObservedObject var store: TargetStore
     @ObservedObject var sessions: SessionStore
     @ObservedObject var notifications: NotificationService
+    /// Passed through (not observed here — only `SessionLogSection`
+    /// subscribes, so the whole detail view doesn't re-render every
+    /// timer tick).
+    let timer: SessionTimer
     let rig: RigPreset
 
     var body: some View {
@@ -74,6 +78,10 @@ struct TargetDetailView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Toggle observing list")
+                .accessibilityLabel(
+                    store.savedIDs.contains(target.object.id)
+                    ? "Remove from observing list"
+                    : "Add to observing list")
                 Button {
                     Task {
                         await notifications.toggleReminder(
@@ -89,6 +97,10 @@ struct TargetDetailView: View {
                 .buttonStyle(.borderless)
                 .help("Notify 30 min before this target's imaging window " +
                       "opens (needs the master switch in Site settings)")
+                .accessibilityLabel(
+                    notifications.notifyIDs.contains(target.object.id)
+                    ? "Disable window-open reminder"
+                    : "Notify 30 minutes before the imaging window opens")
                 if let rank = store.targets.firstIndex(of: target) {
                     Text("#\(rank + 1) tonight")
                         .font(.title3)
@@ -392,7 +404,8 @@ struct TargetDetailView: View {
     // MARK: - Session log
 
     private var sessionSection: some View {
-        SessionLogSection(targetID: target.object.id, sessions: sessions)
+        SessionLogSection(targetID: target.object.id, sessions: sessions,
+                          store: store, timer: timer)
     }
 
     // MARK: - Copy buttons
@@ -454,11 +467,90 @@ struct TargetDetailView: View {
 struct SessionLogSection: View {
     let targetID: String
     @ObservedObject var sessions: SessionStore
+    @ObservedObject var store: TargetStore
+    @ObservedObject var timer: SessionTimer
     @State private var notesDraft = ""
     @State private var exposureDraft = 60.0
+    @State private var showSwitchAlert = false
 
     private var sessionCount: Int {
         sessions.sessionCount(for: targetID)
+    }
+
+    /// Name of the other target a timer is running on, if any.
+    private var otherRunningName: String? {
+        guard let id = timer.targetID, id != targetID else { return nil }
+        return store.targets.first(where: { $0.id == id })?.object.name
+            ?? id
+    }
+
+    /// Live imaging timer: start/stop for this target, with a switch
+    /// flow when another target's timer is running. Stopping always
+    /// logs the elapsed time as a session (rounded to whole minutes).
+    private var timerRow: some View {
+        Group {
+            if timer.targetID == targetID {
+                HStack(spacing: 8) {
+                    Image(systemName: "timer")
+                    Text("\(Fmt.hms(timer.elapsed)) elapsed")
+                        .monospacedDigit()
+                    Spacer()
+                    Button("Stop & log") {
+                        if let (_, e) = timer.stop() {
+                            sessions.logSession(
+                                id: targetID,
+                                exposureMinutes: max(
+                                    1, (e / 60).rounded()))
+                        }
+                    }
+                    .buttonStyle(.link)
+                }
+                .foregroundStyle(.green)
+                .font(.callout)
+                .accessibilityLabel(
+                    "Timer running: \(Fmt.hms(timer.elapsed)) elapsed")
+            } else {
+                HStack(spacing: 8) {
+                    Button(timer.isRunning ? "Switch timer here"
+                                           : "Start imaging")
+                    {
+                        if timer.isRunning {
+                            showSwitchAlert = true
+                        } else {
+                            timer.start(targetID: targetID)
+                        }
+                    }
+                    .buttonStyle(.link)
+                    if let other = otherRunningName {
+                        Text("Timer running on \(other)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.callout)
+                .alert("Timer already running",
+                       isPresented: $showSwitchAlert)
+                {
+                    Button("Log & switch") {
+                        if let (oldID, e) = timer.stop() {
+                            sessions.logSession(
+                                id: oldID,
+                                exposureMinutes: max(
+                                    1, (e / 60).rounded()))
+                        }
+                        timer.start(targetID: targetID)
+                    }
+                    Button("Discard & switch", role: .destructive) {
+                        timer.stop()
+                        timer.start(targetID: targetID)
+                    }
+                    Button("Cancel", role: .cancel) { }
+                } message: {
+                    Text("A timer is already running on " +
+                         "\(otherRunningName ?? "another target").")
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -466,6 +558,7 @@ struct SessionLogSection: View {
             Text("Session log")
                 .font(.headline)
                 .foregroundStyle(.secondary)
+            timerRow
             if sessionCount > 0 {
                 Text("Total: " +
                      "\(Fmt.exposure(sessions.totalExposureMinutes(for: targetID))) " +
@@ -503,6 +596,7 @@ struct SessionLogSection: View {
                         }
                         .buttonStyle(.borderless)
                         .help("Delete this session")
+                        .accessibilityLabel("Delete this session")
                     }
                     .font(.callout)
                 }

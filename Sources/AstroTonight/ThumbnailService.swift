@@ -10,6 +10,28 @@ enum ThumbnailService {
     /// Disk-cache cap; thumbnails are ~15 KB each, so this is generous.
     private static let cacheCapBytes = 200 * 1024 * 1024
 
+    /// Download-date manifest (filename → epoch), persisted in
+    /// UserDefaults. Tracks insertion order for oldest-first eviction
+    /// WITHOUT reading file timestamps — those are a required-reason API
+    /// on iOS whose only approved reason is user-visible display, which
+    /// cache eviction is not. Files missing from the manifest (caches
+    /// written by older builds) count as oldest and go first.
+    private static let manifestKey = "AstroTonight.thumbnailManifest"
+
+    private static func loadManifest() -> [String: Double] {
+        guard let data = UserDefaults.standard.data(forKey: manifestKey),
+              let m = try? JSONDecoder().decode([String: Double].self,
+                                                from: data)
+        else { return [:] }
+        return m
+    }
+
+    private static func saveManifest(_ m: [String: Double]) {
+        if let data = try? JSONEncoder().encode(m) {
+            UserDefaults.standard.set(data, forKey: manifestKey)
+        }
+    }
+
     private static func cacheDir() -> URL {
         FileManager.default
             .urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -60,6 +82,10 @@ enum ThumbnailService {
                 at: cacheURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true)
             try? data.write(to: cacheURL, options: .atomic)
+            var manifest = loadManifest()
+            manifest[cacheURL.lastPathComponent] =
+                Date().timeIntervalSince1970
+            saveManifest(manifest)
             Task.detached(priority: .background) { evictIfNeeded() }
             return data
         } catch {
@@ -94,29 +120,37 @@ enum ThumbnailService {
             "&projection=SIN&coordsys=icrs&format=jpg")
     }
 
-    /// Drop oldest files first when the cache exceeds the cap.
+    /// Drop oldest files first when the cache exceeds the cap, using
+    /// the download-date manifest (never file timestamps — see above).
     private static func evictIfNeeded() {
         let dir = cacheDir()
-        let keys: [URLResourceKey] = [.fileSizeKey,
-                                      .contentModificationDateKey]
         guard let urls = try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: keys)
+            at: dir, includingPropertiesForKeys: [.fileSizeKey])
         else { return }
+        var manifest = loadManifest()
         var total = 0
-        var entries = [(URL, Int, Date)]()
+        var entries = [(URL, Int, Double)]()
         for u in urls {
-            guard let v = try? u.resourceValues(forKeys: Set(keys)),
-                  let size = v.fileSize,
-                  let date = v.contentModificationDate
-            else { continue }
+            let v = try? u.resourceValues(forKeys: [.fileSizeKey])
+            guard let size = v?.fileSize else { continue }
             total += size
-            entries.append((u, size, date))
+            // Unknown files (pre-manifest caches) count as oldest.
+            entries.append((u, size,
+                            manifest[u.lastPathComponent] ?? 0))
         }
-        guard total > cacheCapBytes else { return }
+        // Prune manifest entries for files that no longer exist.
+        let live = Set(urls.map(\.lastPathComponent))
+        manifest = manifest.filter { live.contains($0.key) }
+        guard total > cacheCapBytes else {
+            saveManifest(manifest)
+            return
+        }
         for (u, size, _) in entries.sorted(by: { $0.2 < $1.2 }) {
             try? FileManager.default.removeItem(at: u)
+            manifest.removeValue(forKey: u.lastPathComponent)
             total -= size
             if total <= cacheCapBytes { break }
         }
+        saveManifest(manifest)
     }
 }

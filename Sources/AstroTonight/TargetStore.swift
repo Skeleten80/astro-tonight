@@ -23,6 +23,39 @@ final class TargetStore: ObservableObject {
         Set(UserDefaults.standard.stringArray(forKey: "AstroTonight.savedIDs") ?? [])
     }()
 
+    /// User-imported CSV targets, persisted as JSON. Ranked together
+    /// with the vendored catalogue.
+    @Published private(set) var customObjects: [CatalogObject] = {
+        guard let data = UserDefaults.standard.data(
+            forKey: "AstroTonight.customTargets"),
+              let decoded = try? JSONDecoder().decode(
+                [CatalogObject].self, from: data)
+        else { return [] }
+        return decoded
+    }()
+
+    func addCustomObjects(_ objects: [CatalogObject]) {
+        customObjects.append(contentsOf: objects)
+        saveCustomObjects()
+        recompute()
+    }
+
+    func removeCustomObject(id: String) {
+        customObjects.removeAll { $0.id == id }
+        // Drop dangling references so a deleted target can't linger in
+        // the observing list.
+        if savedIDs.contains(id) { toggleSaved(id: id) }
+        saveCustomObjects()
+        recompute()
+    }
+
+    private func saveCustomObjects() {
+        if let data = try? JSONEncoder().encode(customObjects) {
+            UserDefaults.standard.set(data,
+                                      forKey: "AstroTonight.customTargets")
+        }
+    }
+
     func toggleSaved(id: String) {
         if savedIDs.contains(id) {
             savedIDs.remove(id)
@@ -88,7 +121,7 @@ final class TargetStore: ObservableObject {
         debounceWork?.cancel()
         guard !catalog.isEmpty else { return }
         let horizon = HorizonStore.load()
-        let result = Ranker.rank(catalog: catalog,
+        let result = Ranker.rank(catalog: catalog + customObjects,
                                 lat: settings.lat, lon: settings.lon,
                                 now: Date(),
                                 minAlt: settings.minAlt,

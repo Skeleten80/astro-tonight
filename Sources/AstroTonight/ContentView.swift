@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Formatters
 
@@ -46,6 +47,23 @@ enum Fmt {
         return "\(h)h \(m)m"
     }
 
+    /// "21.5°C" or "70.7°F" for a Celsius temperature, per the user's
+    /// unit preference. Thresholds stay in Celsius — physics doesn't
+    /// convert, only the display does.
+    static func temperature(_ celsius: Double, fahrenheit: Bool) -> String {
+        if fahrenheit {
+            return String(format: "%.1f°F", celsius * 9 / 5 + 32)
+        }
+        return String(format: "%.1f°C", celsius)
+    }
+
+    /// "02:14:33" for an elapsed timer in seconds.
+    static func hms(_ seconds: TimeInterval) -> String {
+        let s = max(0, Int(seconds))
+        return String(format: "%02d:%02d:%02d",
+                      s / 3600, (s % 3600) / 60, s % 60)
+    }
+
     /// "2h 14m" (or "14m" under an hour) for a countdown in seconds.
     static func countdown(_ seconds: TimeInterval) -> String {
         let s = max(0, Int(seconds))
@@ -67,6 +85,12 @@ enum Fmt {
     }()
 }
 
+/// One-shot CSV import result, shown in an alert.
+struct ImportAlert: Identifiable {
+    let id = UUID()
+    let message: String
+}
+
 // MARK: - Main view
 
 struct ContentView: View {
@@ -77,7 +101,11 @@ struct ContentView: View {
     @StateObject private var horizonStore = HorizonStore()
     @StateObject private var rigStore = RigStore()
     @StateObject private var notifications = NotificationService()
+    @StateObject private var sessionTimer = SessionTimer()
+    @StateObject private var checklist = ChecklistStore()
     @AppStorage("AstroTonight.nightVision") private var nightVision = false
+    @AppStorage("AstroTonight.didOnboard") private var didOnboard = false
+    @AppStorage("AstroTonight.useFahrenheit") private var useFahrenheit = false
     @State private var selection: RankedTarget?
     @State private var searchText = ""
     @State private var kind: ObjectKind = .all
@@ -85,6 +113,12 @@ struct ContentView: View {
     @State private var listOnly = false
     @State private var hideImaged = false
     @State private var showSettings = false
+    @State private var showTimeline = true
+    @State private var showChecklist = true
+    @State private var showOnboarding = false
+    @State private var showImporter = false
+    @State private var checklistDraft = ""
+    @State private var importAlert: ImportAlert?
 
     var body: some View {
         ZStack {
@@ -96,6 +130,7 @@ struct ContentView: View {
                     TargetDetailView(target: target, store: store,
                                      sessions: sessions,
                                      notifications: notifications,
+                                     timer: sessionTimer,
                                      rig: rigStore.selected)
                 } else {
                     ContentUnavailableView(
@@ -178,6 +213,15 @@ struct ContentView: View {
         .onChange(of: notifications.isAuthorized) { _, _ in
             scheduleNotifications()
         }
+        .sheet(isPresented: $showOnboarding) {
+            OnboardingView(store: store, location: location,
+                           rigStore: rigStore, didOnboard: $didOnboard)
+        }
+        .onAppear {
+            // First launch (and once for existing installs, since the
+            // flag is new) — "Skip" keeps the current defaults.
+            if !didOnboard { showOnboarding = true }
+        }
     }
 
     /// (Re-)schedule window-open reminders for opted-in targets. Called
@@ -231,6 +275,24 @@ struct ContentView: View {
             VStack(spacing: 8) {
                 topPickCard
 
+                DisclosureGroup("Tonight's schedule",
+                                isExpanded: $showTimeline)
+                {
+                    NightTimelineView(
+                        targets: timelineTargets,
+                        usingList: !store.savedIDs.isEmpty,
+                        lat: store.settings.lat,
+                        lon: store.settings.lon,
+                        minAlt: store.settings.minAlt,
+                        horizon: store.horizonProfile,
+                        darkStart: store.darkStart,
+                        darkEnd: store.darkEnd,
+                        now: store.now,
+                        windowStart: store.windowStart,
+                        selection: $selection)
+                }
+                .font(.callout)
+
                 Picker("Type", selection: $kind) {
                     ForEach(ObjectKind.allCases) { k in
                         Text(k.rawValue).tag(k)
@@ -278,43 +340,40 @@ struct ContentView: View {
                         .disabled(store.savedIDs.isEmpty)
                     }
                     Button {
-                        copyToClipboard(Planning.observingPlanText(
-                            savedIDs: store.savedIDs,
-                            ranked: store.targets,
-                            lat: store.settings.lat, lon: store.settings.lon,
-                            siteLabel: location.isFollowing
-                                ? "device location" : SiteSettings.siteName,
-                            minAlt: store.settings.minAlt,
-                            horizon: store.horizonProfile,
-                            darkStart: store.darkStart,
-                            darkEnd: store.darkEnd,
-                            cloud: cloudSamples,
-                            seeing: seeingSamples,
-                            dewSpread: currentDew?.spread,
-                            moonIllumination: store.moon?.illumination ?? 0,
-                            waxing: store.moon?.waxing ?? false,
-                            rig: rigStore.selected,
-                            imagedIDs: Set(sessions.entries.keys),
-                            now: store.now))
+                        copyToClipboard(observingPlanString)
                     } label: {
                         Label("Copy observing plan", systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.link)
                     .help("Copy a Markdown observing plan for tonight")
                     .disabled(store.targets.isEmpty)
+                    ShareLink(item: observingPlanString,
+                              preview: SharePreview(
+                                "Observing plan",
+                                image: Image(systemName: "doc.text")))
+                    {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.link)
+                    .help("Share the observing plan")
+                    .disabled(store.targets.isEmpty)
                     Button {
-                        copyToClipboard(Planning.sessionLogMarkdown(
-                            sessions: sessions,
-                            nameFor: { id in
-                                store.targets.first(where: { $0.id == id })
-                                    ?.object.name ?? id
-                            },
-                            now: store.now))
+                        copyToClipboard(sessionLogString)
                     } label: {
                         Label("Copy session log", systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.link)
                     .help("Copy the imaged session log as Markdown")
+                    .disabled(sessions.entries.isEmpty)
+                    ShareLink(item: sessionLogString,
+                              preview: SharePreview(
+                                "Session log",
+                                image: Image(systemName: "doc.text")))
+                    {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.link)
+                    .help("Share the session log")
                     .disabled(sessions.entries.isEmpty)
                 }
                 .font(.callout)
@@ -336,6 +395,65 @@ struct ContentView: View {
 
                 MoonMonthView(now: store.now)
 
+                DisclosureGroup("Pre-session checklist",
+                                isExpanded: $showChecklist)
+                {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(checklist.items) { item in
+                            HStack(spacing: 8) {
+                                Button {
+                                    checklist.toggle(item.id)
+                                } label: {
+                                    Image(systemName: item.done
+                                        ? "checkmark.circle.fill"
+                                        : "circle")
+                                        .foregroundStyle(item.done
+                                            ? .green : .secondary)
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel(
+                                    item.done
+                                    ? "Mark \(item.title) not done"
+                                    : "Mark \(item.title) done")
+                                Text(item.title)
+                                    .foregroundStyle(item.done
+                                        ? .secondary : .primary)
+                                    .strikethrough(item.done)
+                                Spacer()
+                                Button {
+                                    checklist.remove(item.id)
+                                } label: {
+                                    Image(systemName: "xmark.circle")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.borderless)
+                                .accessibilityLabel(
+                                    "Remove \(item.title) from checklist")
+                            }
+                            .font(.callout)
+                        }
+                        HStack {
+                            TextField("Add item", text: $checklistDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { addChecklistItem() }
+                            Button("Add") { addChecklistItem() }
+                                .buttonStyle(.link)
+                                .disabled(checklistDraft
+                                    .trimmingCharacters(
+                                        in: .whitespacesAndNewlines)
+                                    .isEmpty)
+                        }
+                        .font(.callout)
+                        if checklist.items.contains(where: { $0.done }) {
+                            Button("Reset checks") { checklist.reset() }
+                                .buttonStyle(.link)
+                                .font(.callout)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .font(.callout)
+
                 DisclosureGroup("Site · \(SiteSettings.siteName)", isExpanded: $showSettings) {
                     siteControls
                 }
@@ -349,7 +467,18 @@ struct ContentView: View {
             TargetDetailView(target: target, store: store,
                              sessions: sessions,
                              notifications: notifications,
+                             timer: sessionTimer,
                              rig: rigStore.selected)
+        }
+        .fileImporter(isPresented: $showImporter,
+                      allowedContentTypes: [.commaSeparatedText])
+        { result in
+            handleImport(result)
+        }
+        .alert("CSV import", item: $importAlert) { _ in
+            Button("OK", role: .cancel) { }
+        } message: { a in
+            Text(a.message)
         }
     }
 
@@ -365,6 +494,40 @@ struct ContentView: View {
     private var seeingSamples: [WeatherService.SeeingSample]? {
         if case .ready(let samples) = weather.seeingState { return samples }
         return nil
+    }
+
+    /// The Markdown observing plan, computed once for both Copy and Share.
+    private var observingPlanString: String {
+        Planning.observingPlanText(
+            savedIDs: store.savedIDs,
+            ranked: store.targets,
+            lat: store.settings.lat, lon: store.settings.lon,
+            siteLabel: location.isFollowing
+                ? "device location" : SiteSettings.siteName,
+            minAlt: store.settings.minAlt,
+            horizon: store.horizonProfile,
+            darkStart: store.darkStart,
+            darkEnd: store.darkEnd,
+            cloud: cloudSamples,
+            seeing: seeingSamples,
+            dewSpread: currentDew?.spread,
+            moonIllumination: store.moon?.illumination ?? 0,
+            waxing: store.moon?.waxing ?? false,
+            rig: rigStore.selected,
+            imagedIDs: Set(sessions.entries.keys),
+            now: store.now,
+            fahrenheit: useFahrenheit)
+    }
+
+    /// The Markdown session log, computed once for both Copy and Share.
+    private var sessionLogString: String {
+        Planning.sessionLogMarkdown(
+            sessions: sessions,
+            nameFor: { id in
+                store.targets.first(where: { $0.id == id })
+                    ?.object.name ?? id
+            },
+            now: store.now)
     }
 
     /// "Image this now" hero card: the heuristic top pick when its window
@@ -440,6 +603,15 @@ struct ContentView: View {
         }
         bits.append(pick.target.moonOK ? "Moon OK" : "Moon glare risk")
         return bits.joined(separator: " · ")
+    }
+
+    /// Timeline rows: the observing list when it's non-empty, otherwise
+    /// the top 8 ranked targets.
+    private var timelineTargets: [RankedTarget] {
+        if store.savedIDs.isEmpty {
+            return Array(store.targets.prefix(8))
+        }
+        return store.targets.filter { store.savedIDs.contains($0.id) }
     }
 
     // MARK: - Device location
@@ -563,6 +735,44 @@ struct ContentView: View {
                 store.settings = SiteSettings()
             }
             .buttonStyle(.link)
+            Divider()
+            Toggle("Use °F", isOn: $useFahrenheit)
+            Button {
+                showImporter = true
+            } label: {
+                Label("Import targets (CSV)", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(.link)
+            .help("Import your own targets from a CSV file " +
+                  "(headers: name, ra, dec in decimal degrees)")
+            if !store.customObjects.isEmpty {
+                DisclosureGroup(
+                    "Custom targets (\(store.customObjects.count))")
+                {
+                    ForEach(store.customObjects) { obj in
+                        HStack {
+                            Text(obj.name)
+                                .lineLimit(1)
+                            Spacer()
+                            Button {
+                                store.removeCustomObject(id: obj.id)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Delete \(obj.name)")
+                        }
+                        .font(.callout)
+                    }
+                }
+            }
+            Link(destination: URL(string:
+                "https://github.com/Skeleten80/astro-tonight/issues")!)
+            {
+                Label("Support & feedback", systemImage: "questionmark.circle")
+            }
+            .font(.callout)
             Text("24 h window centred on now · 10-min steps")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -622,8 +832,13 @@ struct ContentView: View {
             if hideImaged && sessions.dateImaged(for: target.id) != nil {
                 return false
             }
-            let kindOK = kind == .all
-                || ObjectKind.of(target.object.type) == kind
+            let kindOK: Bool
+            if kind == .custom {
+                kindOK = target.object.isCustom
+            } else {
+                kindOK = kind == .all
+                    || ObjectKind.of(target.object.type) == kind
+            }
             guard kindOK else { return false }
             guard !q.isEmpty else { return true }
             if target.object.name.lowercased().contains(q) { return true }
@@ -809,7 +1024,8 @@ struct ContentView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         Text("Dew spread " +
-                             "\(String(format: "%.1f°C", d.spread))")
+                             Fmt.temperature(d.spread,
+                                             fahrenheit: useFahrenheit))
                             .foregroundStyle(dewColor(d.spread))
                         if d.spread < 1.5 {
                             Text("· heater on")
@@ -826,8 +1042,8 @@ struct ContentView: View {
             }
         }
         .help("Temperature minus dew point (Open-Meteo forecast). Under " +
-              "about 1.5°C the SCT corrector plate will dew up — run the " +
-              "heater.")
+              "about \(Fmt.temperature(1.5, fahrenheit: useFahrenheit)) " +
+              "the SCT corrector plate will dew up — run the heater.")
     }
 
     private func dewColor(_ spread: Double) -> Color {
@@ -838,6 +1054,47 @@ struct ContentView: View {
 
     private func copyToClipboard(_ s: String) {
         PlatformPasteboard.copy(s)
+    }
+
+    private func addChecklistItem() {
+        checklist.add(title: checklistDraft)
+        checklistDraft = ""
+    }
+
+    /// CSV import result → user-facing alert. `addCustomObjects`
+    /// re-ranks, so imported targets appear immediately.
+    private func handleImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let access = url.startAccessingSecurityScopedResource()
+            defer {
+                if access { url.stopAccessingSecurityScopedResource() }
+            }
+            guard let text = try? String(contentsOf: url,
+                                          encoding: .utf8)
+            else {
+                importAlert = ImportAlert(
+                    message: "Couldn't read that file as text.")
+                return
+            }
+            let r = CSVImport.parse(text)
+            if !r.imported.isEmpty { store.addCustomObjects(r.imported) }
+            if r.imported.isEmpty && r.skipped == 0 {
+                importAlert = ImportAlert(message:
+                    "No targets found — the CSV needs headers: name, ra, " +
+                    "dec (decimal degrees).")
+            } else {
+                importAlert = ImportAlert(message:
+                    "\(r.imported.count) imported" +
+                    (r.skipped > 0
+                        ? ", \(r.skipped) skipped (bad rows — check RA/Dec " +
+                          "are decimal degrees)"
+                        : "") + ".")
+            }
+        case .failure:
+            break // user cancelled
+        }
     }
 }
 
@@ -869,6 +1126,9 @@ struct TargetRow: View {
                 .buttonStyle(.borderless)
                 .help(isSaved ? "Remove from observing list"
                               : "Add to observing list")
+                .accessibilityLabel(isSaved
+                    ? "Remove from observing list"
+                    : "Add to observing list")
                 nowBadge
                 if let d = imagedDate {
                     Text("✓ \(Fmt.dayMonth.string(from: d))")
@@ -919,6 +1179,7 @@ struct TargetRow: View {
         case .nebula: return "nebula"
         case .cluster: return "cluster"
         case .other: return "other"
+        case .custom: return "custom"
         }
     }
 
@@ -929,6 +1190,7 @@ struct TargetRow: View {
         case .nebula: return .purple
         case .cluster: return .orange
         case .other: return .gray
+        case .custom: return .teal
         }
     }
 
@@ -994,6 +1256,7 @@ struct HorizonEditor: View {
                         }
                         .buttonStyle(.borderless)
                         .help("Remove this point")
+                        .accessibilityLabel("Remove this horizon point")
                     }
                     .font(.callout)
                 }
@@ -1126,6 +1389,9 @@ struct MoonMonthView: View {
                         }
                         .font(.caption2)
                         .monospacedDigit()
+                        .accessibilityLabel(
+                            "\(Fmt.weekday.string(from: day.date)): " +
+                            "\(Int(day.illumination * 100))% illuminated")
                     }
                 }
                 .padding(.vertical, 2)

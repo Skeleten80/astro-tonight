@@ -308,7 +308,8 @@ enum Planning {
         waxing: Bool,
         rig: RigPreset,
         imagedIDs: Set<String>,
-        now: Date) -> String
+        now: Date,
+        fahrenheit: Bool = false) -> String
     {
         let usingList = !savedIDs.isEmpty
         let list = usingList
@@ -339,7 +340,8 @@ enum Planning {
             lines.append("Seeing: forecast unavailable")
         }
         if let d = dewSpread {
-            lines.append("Dew spread: \(String(format: "%.1f°C", d))" +
+            lines.append("Dew spread: " +
+                         "\(Fmt.temperature(d, fahrenheit: fahrenheit))" +
                          (d < 1.5 ? " — heater on" : ""))
         } else {
             lines.append("Dew spread: forecast unavailable")
