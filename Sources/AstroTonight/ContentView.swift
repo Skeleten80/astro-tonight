@@ -127,6 +127,7 @@ struct ContentView: View {
     @State private var showSatellites = false
     @State private var showComets = false
     @State private var showSchedule = false
+    @State private var showAbout = false
     @State private var chartSelection: SkyChartSelection?
 
     /// Shown in the detail pane when nothing is selected. Extracted from
@@ -275,6 +276,14 @@ struct ContentView: View {
                     }
                     .help("Auto night schedule — top targets slotted into dark time")
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showAbout = true
+                    } label: {
+                        Label("About", systemImage: "info.circle")
+                    }
+                    .help("About AstroTonight — data sources and honest caveats")
+                }
             }
             .searchable(text: $searchText, placement: .sidebar,
                         prompt: "Search name or catalogue ID")
@@ -353,6 +362,9 @@ struct ContentView: View {
                 slewService: slewService,
                 darkStart: store.darkStart,
                 darkEnd: store.darkEnd)
+        }
+        .sheet(isPresented: $showAbout) {
+            AboutView()
         }
         .onAppear {
             // First launch (and once for existing installs, since the
