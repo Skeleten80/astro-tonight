@@ -126,6 +126,7 @@ struct ContentView: View {
     @State private var showSkyChart = false
     @State private var showSatellites = false
     @State private var showComets = false
+    @State private var showSchedule = false
     @State private var chartSelection: SkyChartSelection?
 
     /// Shown in the detail pane when nothing is selected. Extracted from
@@ -266,6 +267,14 @@ struct ContentView: View {
                     }
                     .help("Bright comets with current ephemerides")
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showSchedule = true
+                    } label: {
+                        Label("Night schedule", systemImage: "calendar.badge.clock")
+                    }
+                    .help("Auto night schedule — top targets slotted into dark time")
+                }
             }
             .searchable(text: $searchText, placement: .sidebar,
                         prompt: "Search name or catalogue ID")
@@ -326,6 +335,21 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showComets) {
             CometsView()
+        }
+        .sheet(isPresented: $showSchedule) {
+            NightScheduleView(
+                blocks: NightSchedule.buildSchedule(
+                    ranked: store.targets,
+                    lat: store.settings.lat,
+                    lon: store.settings.lon,
+                    minAlt: store.settings.minAlt,
+                    horizon: horizonStore.profile,
+                    darkStart: store.darkStart,
+                    darkEnd: store.darkEnd,
+                    now: store.now),
+                slewService: slewService,
+                darkStart: store.darkStart,
+                darkEnd: store.darkEnd)
         }
         .onAppear {
             // First launch (and once for existing installs, since the
