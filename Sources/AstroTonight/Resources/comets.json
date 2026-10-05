@@ -1,0 +1,128 @@
+{
+  "source_url": "https://www.minorplanetcenter.net/iau/Ephemerides/Comets/Soft03Cmt.txt",
+  "fetched_utc": "2026-10-05T11:17:54Z",
+  "fetch_note": "local file /tmp/Soft03Cmt.txt",
+  "selection": "element epoch within 400 d of fetch; top 10 by estimated current total magnitude (m = H + 5*log10(Delta) + 2.5*G*log10(r)), m <= 16.0",
+  "objects": [
+    {
+      "name": "161P/Hartley-IRAS",
+      "epochJD": 2461317.5,
+      "e": 0.8361785,
+      "q_au": 1.2651141548939997,
+      "tp_jd": 2453533.1170253535,
+      "node_deg": 1.4736,
+      "peri_deg": 47.0647,
+      "incl_deg": 95.7918,
+      "H": 8.5,
+      "G": 6.0
+    },
+    {
+      "name": "169P/NEAT",
+      "epochJD": 2461317.5,
+      "e": 0.76790012,
+      "q_au": 0.6043483984405201,
+      "tp_jd": 2461304.8870839854,
+      "node_deg": 176.0257,
+      "peri_deg": 218.1404,
+      "incl_deg": 11.2863,
+      "H": 15.8,
+      "G": 4.0
+    },
+    {
+      "name": "78P/Gehrels",
+      "epochJD": 2461317.5,
+      "e": 0.46291472,
+      "q_au": 2.00455479717952,
+      "tp_jd": 2461216.631403004,
+      "node_deg": 210.492,
+      "peri_deg": 192.8076,
+      "incl_deg": 6.2575,
+      "H": 5.5,
+      "G": 8.0
+    },
+    {
+      "name": "10P/Tempel",
+      "epochJD": 2461317.5,
+      "e": 0.53744192,
+      "q_au": 1.4177382024096,
+      "tp_jd": 2461254.6038605394,
+      "node_deg": 117.7968,
+      "peri_deg": 195.4603,
+      "incl_deg": 12.0271,
+      "H": 13.1,
+      "G": 4.0
+    },
+    {
+      "name": "P/2010 H2 (Vales)",
+      "epochJD": 2461317.5,
+      "e": 0.19819002,
+      "q_au": 3.0759940498037404,
+      "tp_jd": 2460744.8798405877,
+      "node_deg": 64.1852,
+      "peri_deg": 128.1631,
+      "incl_deg": 14.2771,
+      "H": 6.0,
+      "G": 4.0
+    },
+    {
+      "name": "220P/McNaught",
+      "epochJD": 2461317.5,
+      "e": 0.50030759,
+      "q_au": 1.5593046564848898,
+      "tp_jd": 2461205.6153885736,
+      "node_deg": 150.0841,
+      "peri_deg": 180.5609,
+      "incl_deg": 8.1208,
+      "H": 11.9,
+      "G": 4.0
+    },
+    {
+      "name": "123P/West-Hartley",
+      "epochJD": 2461317.5,
+      "e": 0.44469641,
+      "q_au": 2.1587471485537204,
+      "tp_jd": 2461305.3712467044,
+      "node_deg": 45.848,
+      "peri_deg": 103.8761,
+      "incl_deg": 15.2813,
+      "H": 4.0,
+      "G": 10.0
+    },
+    {
+      "name": "C/2023 R1 (PANSTARRS)",
+      "epochJD": 2461143.8532,
+      "e": 1.002214,
+      "q_au": 3.570071,
+      "tp_jd": 2461143.8532,
+      "node_deg": 62.5713,
+      "peri_deg": 144.2563,
+      "incl_deg": 149.3128,
+      "H": 6.0,
+      "G": 4.0
+    },
+    {
+      "name": "260P/McNaught",
+      "epochJD": 2461317.5,
+      "e": 0.60860415,
+      "q_au": 1.4179755002978,
+      "tp_jd": 2461257.5065906066,
+      "node_deg": 349.2713,
+      "peri_deg": 18.5124,
+      "incl_deg": 15.0395,
+      "H": 13.4,
+      "G": 4.0
+    },
+    {
+      "name": "65P/Gunn",
+      "epochJD": 2461317.5,
+      "e": 0.24808265,
+      "q_au": 2.9255194218431,
+      "tp_jd": 2460842.58944805,
+      "node_deg": 61.9608,
+      "peri_deg": 213.5974,
+      "incl_deg": 9.1752,
+      "H": 5.0,
+      "G": 6.0
+    }
+  ]
+}
