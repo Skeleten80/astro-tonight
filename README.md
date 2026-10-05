@@ -261,6 +261,27 @@ navigation stack on iPhone automatically.
   Kepler solver (validated against JPL Horizons to < 9″). Element epoch
   age is shown per object; a STALE banner appears past 30 days —
   positions from old elements are not trustworthy for finding.
+- **Tonight's grade** — a single A–F in the toolbar answering "is tonight
+  worth setting up?", graded from cloud cover, seeing, moon, and dark
+  hours. The formula is documented and every deduction is itemized —
+  tap the grade for the full breakdown. Shows "—" until the forecast
+  loads.
+- **Auto night schedule** — a toolbar sheet that greedily slots the top
+  ranked targets' imaging windows into dark hours (45-minute minimum
+  blocks, no double-booking, up to 4), each block with a Slew button.
+- **Satellite pass notifications** — opt-in toggle next to the dusk
+  reminder: visible passes above 20° max elevation notify 20 minutes
+  before rise ("ISS visible in 20 min — max 62° at 21:42"). Shares the
+  ≤8-notification budget with window reminders; no TLE data means no
+  notifications, never a crash.
+- **About sheet** — toolbar button with the app version, data-source
+  credits (OpenNGC CC-BY-SA-4.0, Tycho-2, CelesTrak, MPC, Open-Meteo,
+  7Timer!, NASA SkyView), and the honest-caveats list.
+- **First-run onboarding** — a 3-step setup (location → rig → minimum
+  altitude) plus a 4th "What's new" step touring the sky chart,
+  tap-to-slew, the 12,823-object catalog, satellite passes, and comets.
+  On first launch, so nobody else opens the app on Stratford
+  with a 6SE. Skippable; existing installs see it once.
 
 ## Ranking semantics
 
@@ -311,9 +332,14 @@ the detail view crossfades between targets.
   (`scripts/build-app.sh`); on iOS they need the app installed (not the
   simulator).
 - **New in this build: not yet compiled.** The sky chart, tap-to-slew,
-  satellite passes, and comet modules were written and hand-reviewed
-  without a Swift compiler on the build machine — Xcode on the iMac is
-  the real test, same as every earlier wave.
+  satellite passes, comet modules, tonight's grade, auto night
+  schedule, satellite notifications, and About sheet were written and
+  hand-reviewed without a Swift compiler on the build machine — Xcode
+  on the iMac is the real test, same as every earlier wave.
+- **Tonight's grade and the auto night schedule are heuristics**, not
+  measurements — the grade's formula is documented in-app and every
+  deduction is itemized; the schedule is greedy over rank order, not an
+  optimizer.
 - The sky chart's star positions are **J2000** (Tycho-2 frame, no
   precession to apparent place) — fine for star-hopping, not for
   precision pointing. The bundled set is cut at **V < 11.5** (~1.46 M

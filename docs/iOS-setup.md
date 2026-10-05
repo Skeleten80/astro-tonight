@@ -38,7 +38,7 @@ than none. Creating the project on the iMac takes about five minutes.
    - ✅ **"Add to targets: AstroTonight" must be checked**
    - "Create groups" (not folder references)
 
-   This brings in all 23 Swift files **and** `Resources/` (the catalogue
+   This brings in all 26 Swift files **and** `Resources/` (the catalogue
    `catalog.json`, the star-chart `stars.bin` + `constellations.json`, the
    satellite `tle.txt`, and the comet `comets.json` — it's inside the
    dragged folder, so everything lands in the app bundle; the code finds
