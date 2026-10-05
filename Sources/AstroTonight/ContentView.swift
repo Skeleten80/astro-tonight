@@ -120,6 +120,13 @@ struct ContentView: View {
     @State private var showImporter = false
     @State private var checklistDraft = ""
     @State private var importAlert: ImportAlert?
+    @StateObject private var slewService = SlewService()
+    @StateObject private var satelliteTracker = SatelliteTracker()
+    @State private var starStore = StarStore()
+    @State private var showSkyChart = false
+    @State private var showSatellites = false
+    @State private var showComets = false
+    @State private var chartSelection: SkyChartSelection?
 
     /// Shown in the detail pane when nothing is selected. Extracted from
     /// `body` so the type-checker doesn't have to chew through the whole
@@ -129,6 +136,54 @@ struct ContentView: View {
             "Select a target",
             systemImage: "telescope",
             description: Text("Ranked for your site — same ordering as `astrocapture tonight`."))
+    }
+
+    /// Sky-chart sheet content. Extracted for the same type-checker reason.
+    /// ScopePilot's /api/goto wants RA in hours; the catalog stores degrees.
+    private var skyChartSheet: some View {
+        SkyChartView(
+            starStore: starStore,
+            lat: store.settings.lat,
+            lon: store.settings.lon,
+            date: store.now,
+            targets: filtered.map {
+                SkyChartTarget(id: $0.id, name: $0.object.name,
+                               ra: $0.object.ra, dec: $0.object.dec,
+                               mag: $0.object.mag)
+            },
+            onSelect: { chartSelection = $0 })
+            .overlay(alignment: .bottom) {
+                if let sel = chartSelection {
+                    chartSelectionCard(sel)
+                }
+            }
+    }
+
+    /// Tap-selection card over the sky chart, with the ScopePilot slew action.
+    private func chartSelectionCard(_ sel: SkyChartSelection) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(sel.name)
+                    .font(.headline)
+                Spacer()
+                Button {
+                    chartSelection = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            Text(String(format: "RA %.2f° · Dec %+.2f°",
+                       sel.ra, sel.dec))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            SlewButton(ra: sel.ra / 15.0, dec: sel.dec,
+                       name: sel.name, slewService: slewService)
+        }
+        .padding(12)
+        .glassPanel()
+        .padding()
     }
 
     var body: some View {
@@ -142,7 +197,8 @@ struct ContentView: View {
                                      sessions: sessions,
                                      notifications: notifications,
                                      timer: sessionTimer,
-                                     rig: rigStore.selected)
+                                     rig: rigStore.selected,
+                                     slewService: slewService)
                 } else {
                     emptyDetailView
                 }
@@ -182,6 +238,30 @@ struct ContentView: View {
                                 ? "moon.circle.fill" : "moon.circle")
                     }
                     .help("Red overlay to preserve dark adaptation at the scope")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showSkyChart = true
+                    } label: {
+                        Label("Sky chart", systemImage: "star.circle")
+                    }
+                    .help("Interactive planetarium chart for your site and time")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showSatellites = true
+                    } label: {
+                        Label("Satellites", systemImage: "antenna.radiowaves.left.and.right")
+                    }
+                    .help("Upcoming satellite passes for your site")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showComets = true
+                    } label: {
+                        Label("Comets", systemImage: "sparkles")
+                    }
+                    .help("Bright comets with current ephemerides")
                 }
             }
             .searchable(text: $searchText, placement: .sidebar,
@@ -227,6 +307,22 @@ struct ContentView: View {
         .sheet(isPresented: $showOnboarding) {
             OnboardingView(store: store, location: location,
                            rigStore: rigStore, didOnboard: $didOnboard)
+        }
+        .sheet(isPresented: $showSkyChart) {
+            skyChartSheet
+        }
+        .sheet(isPresented: $showSatellites) {
+            SatellitePassesView(tracker: satelliteTracker,
+                                latitude: store.settings.lat,
+                                longitude: store.settings.lon)
+                .task {
+                    await satelliteTracker.predictPasses(
+                        latitude: store.settings.lat,
+                        longitude: store.settings.lon)
+                }
+        }
+        .sheet(isPresented: $showComets) {
+            CometsView()
         }
         .onAppear {
             // First launch (and once for existing installs, since the
@@ -498,7 +594,8 @@ struct ContentView: View {
                              sessions: sessions,
                              notifications: notifications,
                              timer: sessionTimer,
-                             rig: rigStore.selected)
+                             rig: rigStore.selected,
+                             slewService: slewService)
         }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [.commaSeparatedText])

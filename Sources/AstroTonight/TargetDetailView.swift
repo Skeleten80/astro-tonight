@@ -10,6 +10,8 @@ struct TargetDetailView: View {
     /// timer tick).
     let timer: SessionTimer
     let rig: RigPreset
+    /// Shared ScopePilot slew service, passed in from ContentView.
+    let slewService: SlewService
     /// Corner-trailing tolerance (px) for the max-sub recommendation.
     /// Same key as the site-settings slider.
     @AppStorage("AstroTonight.trailTolerancePx") private var trailTolerancePx = 2.0
@@ -21,6 +23,9 @@ struct TargetDetailView: View {
                 thumbnailSection
                 finderSection
                 tonightSection
+                    .padding(14)
+                    .glassPanel()
+                slewSection
                     .padding(14)
                     .glassPanel()
                 AltitudeChartView(target: target,
@@ -194,6 +199,22 @@ struct TargetDetailView: View {
                 factRow("Field rotation at peak", fieldRotationText)
                 factRow("Max sub", maxSubText)
             }
+        }
+    }
+
+    /// ScopePilot slew action. RA is converted from catalog degrees to the
+    /// hours ScopePilot's /api/goto expects.
+    private var slewSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Telescope")
+            SlewButton(ra: target.object.ra / 15.0,
+                       dec: target.object.dec,
+                       name: target.object.name,
+                       slewService: slewService)
+            Text("Sends a goto to ScopePilot at 127.0.0.1:8765 — " +
+                 "start it with `scopepilot dash`.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
