@@ -209,6 +209,9 @@ struct ContentView: View {
                     moonChip
                 }
                 ToolbarItem(placement: .primaryAction) {
+                    GradeChipView(store: store, weather: weather)
+                }
+                ToolbarItem(placement: .primaryAction) {
                     Button {
                         copyToClipboard(Planning.schedulerYAML(
                             targets: filtered,
