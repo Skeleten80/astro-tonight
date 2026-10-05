@@ -38,9 +38,11 @@ than none. Creating the project on the iMac takes about five minutes.
    - ✅ **"Add to targets: AstroTonight" must be checked**
    - "Create groups" (not folder references)
 
-   This brings in all 17 Swift files **and** `Resources/catalog.json`
-   (it's inside the dragged folder, so it lands in the app bundle —
-   the code finds it via `Bundle.main` in a plain Xcode project).
+   This brings in all 23 Swift files **and** `Resources/` (the catalogue
+   `catalog.json`, the star-chart `stars.bin` + `constellations.json`, the
+   satellite `tle.txt`, and the comet `comets.json` — it's inside the
+   dragged folder, so everything lands in the app bundle; the code finds
+   it via `Bundle.main` in a plain Xcode project).
 
 5. **Deployment target:** select the project (top of the navigator) →
    the `AstroTonight` target → General → **Minimum Deployments: iOS 17.0**.
@@ -58,7 +60,8 @@ than none. Creating the project on the iMac takes about five minutes.
 
 8. **Run it:** plug in the iPhone/iPad (or use the same Wi-Fi network),
    pick it in the run-destination menu next to the ▶ button, press **⌘R**.
-   First launch takes a moment while the catalogue ranks (~5,000 objects).
+   First launch takes a moment while the catalogue ranks (~13,000 objects)
+   and the star chart loads (~1.46 M stars).
 
 ### Privacy manifest
 

@@ -1,7 +1,7 @@
 # AstroTonight — "what's worth imaging tonight" (macOS + iOS/iPadOS)
 
 A native companion for AstroCapture across Apple platforms: it loads the
-same vendored 5,045-object night-sky catalogue (`catalog.json`, OpenNGC /
+same vendored 12,823-object night-sky catalogue (`catalog.json`, OpenNGC /
 CC-BY-SA-4.0) and ranks what's best placed tonight for your site — no
 Python, no terminal, just a list you can browse with coffee. One
 universal iOS target covers iPhone and iPad.
@@ -239,6 +239,28 @@ navigation stack on iPhone automatically.
   the window reminders; one notification at the next dark-start. Same
   honest limits as window reminders: scheduled while the app runs, no
   background refresh.
+- **Sky chart** — toolbar button opens an interactive planetarium chart
+  for your site and time: stereographic projection, drag to pan, pinch
+  to zoom, ~1.46 M Tycho-2 stars (V < 11.5) magnitude-scaled, 89
+  constellations' lines, your ranked targets as markers, tap-to-select.
+  Night-vision red mode covers it too.
+- **Tap-to-slew** — the detail view's "Telescope" section and the sky
+  chart's selection card both offer "Slew here", which POSTs the
+  coordinates to ScopePilot's `/api/goto` (needs `scopepilot dash`
+  running on 127.0.0.1:8765). Clear "unreachable" state, never a crash.
+- **Full NGC/IC catalogue** — the vendored catalogue is now the complete
+  OpenNGC set: 12,823 objects (was 5,045). Same ranking algorithm, same
+  decoder schema; the Python mirror of the ranking hot loop clocks
+  12,823 × 145 steps in 0.26 s.
+- **Satellite passes** — upcoming ISS / bright-satellite passes for your
+  site: rise, culmination, set, max elevation, and a visible/daylight/
+  eclipsed badge. SGP4 ported to Swift (validated against python-sgp4 to
+  6e-9 km); bundled TLE snapshot refreshes from CelesTrak when online,
+  with the TLE age shown honestly.
+- **Comets** — bright-comet ephemerides from MPC elements via a Swift
+  Kepler solver (validated against JPL Horizons to < 9″). Element epoch
+  age is shown per object; a STALE banner appears past 30 days —
+  positions from old elements are not trustworthy for finding.
 
 ## Ranking semantics
 
@@ -288,6 +310,24 @@ the detail view crossfades between targets.
   reminders. On macOS they need the real `.app` bundle
   (`scripts/build-app.sh`); on iOS they need the app installed (not the
   simulator).
+- **New in this build: not yet compiled.** The sky chart, tap-to-slew,
+  satellite passes, and comet modules were written and hand-reviewed
+  without a Swift compiler on the build machine — Xcode on the iMac is
+  the real test, same as every earlier wave.
+- The sky chart's star positions are **J2000** (Tycho-2 frame, no
+  precession to apparent place) — fine for star-hopping, not for
+  precision pointing. The bundled set is cut at **V < 11.5** (~1.46 M
+  stars, 13.9 MB) to keep the app bundle sane.
+- "Slew here" only means **ScopePilot accepted the goto** (`wait=False`
+  on its side) — it does not confirm the mount finished moving. And it
+  needs `scopepilot dash` running on the same machine.
+- Satellite predictions **degrade with TLE age** — the app shows how old
+  the elements are; refresh when online. The sunlit/eclipsed flag is a
+  cylindrical-shadow approximation.
+- Comet positions are only as good as their **element epochs** — the app
+  shows per-object age and a STALE banner past 30 days. Fresh elements
+  come from the MPC feed when online.
+
 - The "image this now" top pick is a **heuristic score** (rank position +
   window-open bonus + cloud penalty + moon penalty + small seeing
   penalty), documented in `Planning.topPick`. It points at the detail
@@ -327,3 +367,13 @@ the detail view crossfades between targets.
   `docs/iOS-setup.md`) or App Store Connect will flag the upload. The
   thumbnail cache deliberately avoids file-timestamp APIs so UserDefaults
   (`CA92.1`) is the only declared category.
+
+## Data attributions
+
+- Night-sky catalogue: **OpenNGC** by Mattia Verga and contributors,
+  CC-BY-SA-4.0 (`tools/build_catalog.py` documents the fetch).
+- Star chart: **Tycho-2** (ESA/Hipparcos, public domain) via the CDS
+  VizieR mirror; constellation lines from **d3-celestial** by Olaf
+  Frohn, BSD-2-Clause.
+- Satellite elements: **CelesTrak** TLEs (free). Comet elements: the
+  **Minor Planet Center** bright-comet feed.
