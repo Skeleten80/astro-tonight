@@ -313,6 +313,9 @@ struct ContentView: View {
         .onChange(of: notifications.duskEnabled) { _, _ in
             scheduleNotifications()
         }
+        .onChange(of: notifications.satellitesEnabled) { _, _ in
+            scheduleNotifications()
+        }
         .onChange(of: notifications.isAuthorized) { _, _ in
             scheduleNotifications()
         }
@@ -363,13 +366,23 @@ struct ContentView: View {
     /// the opt-ins, or the master switch changes — the service itself
     /// cancels stale requests first.
     private func scheduleNotifications() {
-        notifications.refresh(ranked: store.targets,
-                              lat: store.settings.lat,
-                              lon: store.settings.lon,
-                              minAlt: store.settings.minAlt,
-                              horizon: store.horizonProfile,
-                              darkStart: store.darkStart,
-                              now: store.now)
+        Task {
+            // Satellite passes need the (heavy) SGP4 scan first; skip it
+            // entirely unless the user opted in. refresh stays sync.
+            if notifications.satellitesEnabled {
+                await satelliteTracker.predictPasses(
+                    latitude: store.settings.lat,
+                    longitude: store.settings.lon)
+            }
+            notifications.refresh(ranked: store.targets,
+                                  lat: store.settings.lat,
+                                  lon: store.settings.lon,
+                                  minAlt: store.settings.minAlt,
+                                  horizon: store.horizonProfile,
+                                  darkStart: store.darkStart,
+                                  satellitePasses: satelliteTracker.passes,
+                                  now: store.now)
+        }
     }
 
     // MARK: - Sidebar
@@ -884,6 +897,9 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                 Toggle("Remind me at astronomical dusk",
                        isOn: $notifications.duskEnabled)
+                    .font(.callout)
+                Toggle("Notify me of bright satellite passes",
+                       isOn: $notifications.satellitesEnabled)
                     .font(.callout)
             }
             Button("Reset to \(SiteSettings.siteName)") {

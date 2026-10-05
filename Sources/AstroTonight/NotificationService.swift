@@ -41,6 +41,19 @@ final class NotificationService: ObservableObject {
         }
     }
 
+    /// "Notify me of bright satellite passes" — reminders 20 min before
+    /// the rise of visible (dark-sky, sunlit) passes above 20° max
+    /// elevation, scheduled from the passes passed into `refresh`.
+    /// Default off: no TLE work, no extra reminders.
+    @Published var satellitesEnabled: Bool =
+        UserDefaults.standard.bool(forKey: "AstroTonight.notifySatellites")
+    {
+        didSet {
+            UserDefaults.standard.set(satellitesEnabled,
+                                      forKey: "AstroTonight.notifySatellites")
+        }
+    }
+
     @Published private(set) var isAuthorized = false
 
     init() {
@@ -73,13 +86,18 @@ final class NotificationService: ObservableObject {
     /// "window opens in 30 min", 30 minutes before `window.start`.
     /// Skips windows already open or past, and anything beyond 48 h.
     /// Plus, when `duskEnabled`, one "astronomical dark begins" reminder
-    /// at the next dark-start. No-op (cancels all) when the master switch
-    /// is off or unauthorized.
+    /// at the next dark-start. Plus, when `satellitesEnabled`, reminders
+    /// 20 min before the rise of bright visible satellite passes in
+    /// `satellitePasses` (default empty — no satellite reminders).
+    /// Windows take priority; satellites fill the remaining budget so
+    /// the total stays at or under 8 pending requests.
+    /// No-op (cancels all) when the master switch is off or unauthorized.
     func refresh(ranked: [RankedTarget],
                  lat: Double, lon: Double,
                  minAlt: Double,
                  horizon: HorizonProfile,
                  darkStart: Date? = nil,
+                 satellitePasses: [SatellitePass] = [],
                  now: Date)
     {
         let center = UNUserNotificationCenter.current()
@@ -130,6 +148,34 @@ final class NotificationService: ObservableObject {
             center.add(UNNotificationRequest(
                 identifier: "AstroTonight.dusk",
                 content: content, trigger: trigger))
+            scheduled += 1
+        }
+        if satellitesEnabled {
+            let horizon48 = now.addingTimeInterval(48 * 3600)
+            let upcoming = satellitePasses.filter { pass in
+                pass.visible && pass.maxElevation > 20 &&
+                pass.rise > now && pass.rise < horizon48
+            }.sorted { $0.rise < $1.rise }
+            for pass in upcoming {
+                guard scheduled < 8 else { break }
+                let fireAt = pass.rise.addingTimeInterval(-20 * 60)
+                guard fireAt > now else { continue }
+                let sanitized = pass.name.filter {
+                    $0.isLetter || $0.isNumber
+                } + String(Int(pass.rise.timeIntervalSince1970))
+                let content = UNMutableNotificationContent()
+                content.title = "🛰 \(pass.name) visible in 20 min"
+                content.body = "Max \(Int(pass.maxElevation))° at " +
+                    Fmt.time.string(from: pass.culmination)
+                content.sound = .default
+                let trigger = UNTimeIntervalNotificationTrigger(
+                    timeInterval: fireAt.timeIntervalSince(now),
+                    repeats: false)
+                center.add(UNNotificationRequest(
+                    identifier: "AstroTonight.sat.\(sanitized)",
+                    content: content, trigger: trigger))
+                scheduled += 1
+            }
         }
     }
 
