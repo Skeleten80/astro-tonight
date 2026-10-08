@@ -115,6 +115,7 @@ struct ContentView: View {
     @State private var hideImaged = false
     @State private var showSettings = false
     @State private var showTimeline = true
+    @State private var showPlanets = true
     @State private var showChecklist = true
     @State private var showOnboarding = false
     @State private var showImporter = false
@@ -456,6 +457,18 @@ struct ContentView: View {
                 }
                 .font(.callout)
 
+                DisclosureGroup("Planets", isExpanded: $showPlanets)
+                {
+                    ForEach(PlanetMath.displayPlanets) { planet in
+                        planetRow(planet)
+                    }
+                    Text("Orientation only — planets never enter the " +
+                         "ranked target list and get no scores.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.callout)
+
                 Picker("Type", selection: $kind) {
                     ForEach(ObjectKind.allCases) { k in
                         Text(k.rawValue).tag(k)
@@ -658,6 +671,49 @@ struct ContentView: View {
             Button("OK", role: .cancel) { }
         } message: { a in
             Text(a.message)
+        }
+    }
+
+    // MARK: - Planets sidebar
+
+    /// One row in the sidebar "Planets" section: symbol + name, current
+    /// altitude, and tonight's rise/set. Planets are display-only here —
+    /// they never enter the ranked DSO list and get no scores.
+    private func planetRow(_ planet: Planet) -> some View {
+        let pos = PlanetMath.position(of: planet, at: store.now)
+        let jd = AstroMath.julianDate(store.now)
+        let alt = AstroMath.altAz(ra: pos.ra, dec: pos.dec,
+                                  julianDate: jd,
+                                  lat: store.settings.lat,
+                                  lon: store.settings.lon).alt
+        let rs = PlanetMath.riseSet(of: planet, at: store.now,
+                                    lat: store.settings.lat,
+                                    lon: store.settings.lon)
+        return HStack {
+            Text(planet.symbol + " " + planet.displayName)
+            Spacer()
+            Text(alt > 0 ? String(format: "%.0f° up", alt)
+                         : "below horizon")
+                .foregroundStyle(alt > 0 ? .primary : .secondary)
+            Text(planetRiseSetText(rs))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+    }
+
+    private func planetRiseSetText(_ rs: (rise: Date?, set: Date?))
+        -> String
+    {
+        switch (rs.rise, rs.set) {
+        case (let rise?, let set?):
+            return "↑ " + Fmt.time.string(from: rise)
+                + " ↓ " + Fmt.time.string(from: set)
+        case (let rise?, nil):
+            return "↑ " + Fmt.time.string(from: rise)
+        case (nil, let set?):
+            return "↓ " + Fmt.time.string(from: set)
+        case (nil, nil):
+            return "—"
         }
     }
 

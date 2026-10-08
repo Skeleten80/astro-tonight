@@ -244,6 +244,13 @@ navigation stack on iPhone automatically.
   to zoom, ~1.46 M Tycho-2 stars (V < 11.5) magnitude-scaled, 89
   constellations' lines, your ranked targets as markers, tap-to-select.
   Night-vision red mode covers it too.
+- **Planets** — the seven visible planets computed in-app from Paul
+  Schlyter's public-domain algorithm (no network needed): pale-gold
+  markers on the sky chart (tap one to slew to it), plus a sidebar
+  "Planets" section with current altitude and tonight's rise/set.
+  Caveat: positions are good to about 1 arcminute — fine for finding
+  them and knowing if they're up, not for precise astrometry.
+  Planets never enter the ranked DSO list and get no scores.
 - **Tap-to-slew** — the detail view's "Telescope" section and the sky
   chart's selection card both offer "Slew here", which POSTs the
   coordinates to ScopePilot's `/api/goto` (needs `scopepilot dash`

@@ -16,6 +16,7 @@ struct SkyChartTarget {
 enum SkyChartSelectionKind {
     case star
     case target
+    case planet
 }
 
 struct SkyChartSelection {
@@ -292,6 +293,9 @@ struct SkyChartView: View {
     let date: Date
     let targets: [SkyChartTarget]
     let onSelect: ((SkyChartSelection) -> Void)? = nil
+    /// Planet markers (Schlyter positions, Planets.swift). Defaulted so
+    /// existing call sites compile unchanged.
+    let showPlanets: Bool = true
 
     @AppStorage("AstroTonight.nightVision") private var nightVision = false
     @State private var centerAltDeg: Double = 90
@@ -446,6 +450,7 @@ struct SkyChartView: View {
         drawConstellations(in: ctx, proj: proj)
         drawStars(in: ctx, stars: projectedStars(proj: proj, size: size))
         drawTargets(in: ctx, proj: proj)
+        drawPlanets(in: ctx, proj: proj)
         drawCardinals(in: ctx, proj: proj)
     }
 
@@ -602,11 +607,39 @@ struct SkyChartView: View {
         }
     }
 
+    /// Planets as small filled pale-gold discs — visually distinct from
+    /// the DSO crosshair circles — with plain-text name labels. Positions
+    /// from PlanetMath (Schlyter, ~1' accuracy); skipped below the
+    /// horizon.
+    private func drawPlanets(in ctx: GraphicsContext,
+                             proj: SkyProjection) {
+        guard showPlanets else { return }
+        let gold = Color(red: 1.0, green: 0.82, blue: 0.45)
+        for planet in PlanetMath.displayPlanets {
+            let pos = PlanetMath.position(of: planet, at: date)
+            let a = AstroMath.altAz(ra: pos.ra, dec: pos.dec,
+                                    julianDate: julianDate,
+                                    lat: lat, lon: lon)
+            if a.alt < 0 { continue }
+            guard let p = proj.point(altDeg: a.alt, azDeg: a.az) else {
+                continue
+            }
+            let r: CGFloat = 4.5
+            ctx.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r,
+                                            width: r * 2, height: r * 2)),
+                     with: .color(gold.opacity(0.95)))
+            // Plain Text only: GraphicsContext.draw takes Text without
+            // modifiers.
+            ctx.draw(Text(planet.symbol + " " + planet.displayName),
+                     at: CGPoint(x: p.x + r + 8, y: p.y - r - 6))
+        }
+    }
+
     // MARK: - Hit testing
 
-    /// Tap: nearest target within 20 pt wins, else nearest drawn star
-    /// within 12 pt. Reports through onSelect; no selection when the
-    /// tap hits empty sky.
+    /// Tap: nearest target within 20 pt wins, else nearest planet within
+    /// 18 pt, else nearest drawn star within 12 pt. Reports through
+    /// onSelect; no selection when the tap hits empty sky.
     private func hitTest(at location: CGPoint, size: CGSize) {
         let proj = projection(size: size)
         var hitTarget: SkyChartTarget?
@@ -629,6 +662,31 @@ struct SkyChartView: View {
         if let t = hitTarget {
             onSelect?(SkyChartSelection(name: t.name, ra: t.ra, dec: t.dec,
                                         kind: .target))
+            return
+        }
+        var hitPlanet: Planet?
+        var planetDist = 18.0
+        for planet in PlanetMath.displayPlanets {
+            let pos = PlanetMath.position(of: planet, at: date)
+            let a = AstroMath.altAz(ra: pos.ra, dec: pos.dec,
+                                    julianDate: julianDate,
+                                    lat: lat, lon: lon)
+            if a.alt < 0 { continue }
+            guard let p = proj.point(altDeg: a.alt, azDeg: a.az) else {
+                continue
+            }
+            let d = hypot(Double(location.x - p.x),
+                          Double(location.y - p.y))
+            if d < planetDist {
+                planetDist = d
+                hitPlanet = planet
+            }
+        }
+        if let planet = hitPlanet {
+            let pos = PlanetMath.position(of: planet, at: date)
+            onSelect?(SkyChartSelection(name: planet.displayName,
+                                        ra: pos.ra, dec: pos.dec,
+                                        kind: .planet))
             return
         }
         var hitStar: PlottedStar?
