@@ -244,6 +244,10 @@ navigation stack on iPhone automatically.
   to zoom, ~1.46 M Tycho-2 stars (V < 11.5) magnitude-scaled, 89
   constellations' lines, your ranked targets as markers, tap-to-select.
   Night-vision red mode covers it too.
+- **Sky-chart time scrub** — a SkySafari-like footer scrubs the chart
+  ±12 h (0.25 h steps) with a "Now" button; the chip reads "now" when
+  live, "chart +01:30" when scrubbed. Only the chart time-travels —
+  ranking, windows, notifications and grades stay on the real time.
 - **Planets** — the seven visible planets computed in-app from Paul
   Schlyter's public-domain algorithm (no network needed): pale-gold
   markers on the sky chart (tap one to slew to it), plus a sidebar
@@ -351,6 +355,9 @@ the detail view crossfades between targets.
   precession to apparent place) — fine for star-hopping, not for
   precision pointing. The bundled set is cut at **V < 11.5** (~1.46 M
   stars, 13.9 MB) to keep the app bundle sane.
+- The sky chart's **time scrub is chart-only**: scrubbing does not
+  re-run rankings, imaging windows, reminders or grades — it previews
+  what the sky looks like at another hour, nothing more.
 - "Slew here" only means **ScopePilot accepted the goto** (`wait=False`
   on its side) — it does not confirm the mount finished moving. And it
   needs `scopepilot dash` running on the same machine.

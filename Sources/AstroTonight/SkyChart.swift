@@ -282,6 +282,11 @@ private struct SkyProjection {
 /// zoom), constellation lines, alt-az grid, and target crosshairs.
 /// Drag to pan, pinch to zoom, tap a star or target to select it.
 ///
+/// Time scrub: the bottom bar scrubs the chart ±12 h around the live
+/// time (0.25 h steps); a "Now" button returns to live. ONLY the chart
+/// time-travels — ranking, windows, notifications and grades stay on
+/// the real `date` this view was given.
+///
 /// Night vision: ContentView's red multiply overlay lives in its own
 /// root ZStack, which sheets render ABOVE — so this view applies the
 /// identical overlay itself (same AppStorage key, color, opacity and
@@ -304,8 +309,22 @@ struct SkyChartView: View {
     @State private var lastDrag: CGSize = .zero
     @State private var starsReady = false
     @GestureState private var pinchScale: CGFloat = 1
+    /// Chart-time override. nil = live (follows `date`); non-nil =
+    /// the chart renders the sky at this absolute time while the rest
+    /// of the app keeps using `date`. Set from the scrub bar below.
+    @State private var chartDate: Date? = nil
+    /// Slider position, hours relative to `date` (−12…+12, 0.25 steps).
+    /// Exists so the slider can be dragged freely; `chartDate` is the
+    /// absolute value the chart actually renders.
+    @State private var scrubOffset: Double = 0
 
-    private var julianDate: Double { AstroMath.julianDate(date) }
+    /// The moment the chart renders. Only the chart reads this —
+    /// everything else (ranking, windows, notifications, grades) uses
+    /// the real `date`.
+    private var effectiveDate: Date { chartDate ?? date }
+    private var julianDate: Double {
+        AstroMath.julianDate(effectiveDate)
+    }
 
     /// 2-minute quantization, matching StarStore.refreshAltAz: the sky
     /// doesn't visibly move faster than that on this chart.
@@ -330,16 +349,80 @@ struct SkyChartView: View {
     }
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                chartContent(size: geo.size)
-                if nightVision {
-                    Color(red: 1, green: 0, blue: 0).opacity(0.35)
-                        .blendMode(.multiply)
-                        .allowsHitTesting(false)
+        // The scrub bar is a fixed footer under the chart (not an
+        // overlay) so it never collides with ContentView's selection
+        // card, which overlays the chart area from above.
+        VStack(spacing: 0) {
+            GeometryReader { geo in
+                ZStack {
+                    chartContent(size: geo.size)
+                    if nightVision {
+                        Color(red: 1, green: 0, blue: 0).opacity(0.35)
+                            .blendMode(.multiply)
+                            .allowsHitTesting(false)
+                    }
                 }
             }
+            timeScrubBar
         }
+    }
+
+    // MARK: - Time scrub
+
+    /// ±HH:MM for the chip, e.g. "+01:30" or "-03:45".
+    private var scrubOffsetLabel: String {
+        let minutes = Int((scrubOffset * 60).rounded())
+        let sign = minutes < 0 ? "-" : "+"
+        let a = abs(minutes)
+        return String(format: "%@%02d:%02d", sign, a / 60, a % 60)
+    }
+
+    /// SkySafari-like scrub footer: a −12…+12 h slider (0.25 h steps),
+    /// a live/scrubbed chip, the rendered chart time, and a "Now"
+    /// button. Chart time is 2-minute-quantized downstream, so
+    /// dragging re-triggers the star refresh (~0.2 s per M stars)
+    /// with no extra caching needed.
+    private var timeScrubBar: some View {
+        VStack(spacing: 4) {
+            Divider()
+            HStack(spacing: 10) {
+                Button("Now") {
+                    scrubOffset = 0
+                    chartDate = nil
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(chartDate == nil
+                    ? Color.accentColor.opacity(0.25)
+                    : Color.white.opacity(0.08))
+                .clipShape(Capsule())
+                Slider(value: $scrubOffset, in: -12...12, step: 0.25)
+                    .onChange(of: scrubOffset) { _, newValue in
+                        if newValue == 0 {
+                            chartDate = nil
+                        } else {
+                            chartDate = date.addingTimeInterval(
+                                newValue * 3600)
+                        }
+                    }
+                Text(chartDate == nil
+                    ? "now" : "chart \(scrubOffsetLabel)")
+                    .font(.caption.monospacedDigit())
+                    .frame(minWidth: 76)
+                Text(effectiveDate,
+                     format: .dateTime.hour().minute())
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            Text("Chart time only — targets, windows and notifications "
+                + "stay on the real time.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 8)
+        }
+        .background(Color.black.opacity(0.35))
     }
 
     private func chartContent(size: CGSize) -> some View {
@@ -616,7 +699,7 @@ struct SkyChartView: View {
         guard showPlanets else { return }
         let gold = Color(red: 1.0, green: 0.82, blue: 0.45)
         for planet in PlanetMath.displayPlanets {
-            let pos = PlanetMath.position(of: planet, at: date)
+            let pos = PlanetMath.position(of: planet, at: effectiveDate)
             let a = AstroMath.altAz(ra: pos.ra, dec: pos.dec,
                                     julianDate: julianDate,
                                     lat: lat, lon: lon)
@@ -667,7 +750,7 @@ struct SkyChartView: View {
         var hitPlanet: Planet?
         var planetDist = 18.0
         for planet in PlanetMath.displayPlanets {
-            let pos = PlanetMath.position(of: planet, at: date)
+            let pos = PlanetMath.position(of: planet, at: effectiveDate)
             let a = AstroMath.altAz(ra: pos.ra, dec: pos.dec,
                                     julianDate: julianDate,
                                     lat: lat, lon: lon)
@@ -683,7 +766,7 @@ struct SkyChartView: View {
             }
         }
         if let planet = hitPlanet {
-            let pos = PlanetMath.position(of: planet, at: date)
+            let pos = PlanetMath.position(of: planet, at: effectiveDate)
             onSelect?(SkyChartSelection(name: planet.displayName,
                                         ra: pos.ra, dec: pos.dec,
                                         kind: .planet))
