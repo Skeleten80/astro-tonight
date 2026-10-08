@@ -248,6 +248,10 @@ navigation stack on iPhone automatically.
   ±12 h (0.25 h steps) with a "Now" button; the chip reads "now" when
   live, "chart +01:30" when scrubbed. Only the chart time-travels —
   ranking, windows, notifications and grades stay on the real time.
+- **Sky-chart FOV indicator** — tap a star, target or planet, and the
+  footer "FOV" button (auto-enabled on selection) draws the selected
+  rig's sensor frame as a thin cyan rectangle on the chart, centered
+  on the selection. It follows the time scrub too.
 - **Planets** — the seven visible planets computed in-app from Paul
   Schlyter's public-domain algorithm (no network needed): pale-gold
   markers on the sky chart (tap one to slew to it), plus a sidebar
@@ -358,6 +362,10 @@ the detail view crossfades between targets.
 - The sky chart's **time scrub is chart-only**: scrubbing does not
   re-run rankings, imaging windows, reminders or grades — it previews
   what the sky looks like at another hour, nothing more.
+- The chart **FOV frame is a v1**: axis-aligned to the RA/Dec grid,
+  no camera-rotation angle — exact on the meridian/equator, skewed
+  near the pole. Good enough to check "does it fit", not a rotated
+  framing preview.
 - "Slew here" only means **ScopePilot accepted the goto** (`wait=False`
   on its side) — it does not confirm the mount finished moving. And it
   needs `scopepilot dash` running on the same machine.

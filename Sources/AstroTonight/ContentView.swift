@@ -154,7 +154,10 @@ struct ContentView: View {
                                ra: $0.object.ra, dec: $0.object.dec,
                                mag: $0.object.mag)
             },
-            onSelect: { chartSelection = $0 })
+            onSelect: { chartSelection = $0 },
+            selection: chartSelection,
+            fovWidthDeg: rigStore.selected.fieldWidthDeg,
+            fovHeightDeg: rigStore.selected.fieldHeightDeg)
             .overlay(alignment: .bottom) {
                 if let sel = chartSelection {
                     chartSelectionCard(sel)

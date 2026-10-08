@@ -19,7 +19,7 @@ enum SkyChartSelectionKind {
     case planet
 }
 
-struct SkyChartSelection {
+struct SkyChartSelection: Equatable {
     let name: String
     let ra: Double
     let dec: Double
@@ -301,6 +301,15 @@ struct SkyChartView: View {
     /// Planet markers (Schlyter positions, Planets.swift). Defaulted so
     /// existing call sites compile unchanged.
     let showPlanets: Bool = true
+    /// Current tap selection (wired by ContentView). Drives the FOV
+    /// frame when `showFOV` is on. Defaulted so existing call sites
+    /// compile unchanged.
+    let selection: SkyChartSelection? = nil
+    /// Selected rig's sensor field, degrees, from
+    /// RigPreset.fieldWidthDeg / fieldHeightDeg (ContentView passes
+    /// the rig store's values). nil = unknown rig, no FOV frame.
+    let fovWidthDeg: Double? = nil
+    let fovHeightDeg: Double? = nil
 
     @AppStorage("AstroTonight.nightVision") private var nightVision = false
     @State private var centerAltDeg: Double = 90
@@ -317,6 +326,10 @@ struct SkyChartView: View {
     /// Exists so the slider can be dragged freely; `chartDate` is the
     /// absolute value the chart actually renders.
     @State private var scrubOffset: Double = 0
+    /// FOV toggle state. Off by default; auto-enables when a selection
+    /// arrives (see the .onChange below) and clears when the selection
+    /// is dismissed — the frame is meaningless without a center.
+    @State private var showFOV = false
 
     /// The moment the chart renders. Only the chart reads this —
     /// everything else (ranking, windows, notifications, grades) uses
@@ -365,6 +378,13 @@ struct SkyChartView: View {
             }
             timeScrubBar
         }
+        .onChange(of: selection) { old, new in
+            if old == nil, new != nil {
+                showFOV = true
+            } else if new == nil {
+                showFOV = false
+            }
+        }
     }
 
     // MARK: - Time scrub
@@ -386,6 +406,17 @@ struct SkyChartView: View {
         VStack(spacing: 4) {
             Divider()
             HStack(spacing: 10) {
+                Button("FOV") {
+                    showFOV.toggle()
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(showFOV
+                    ? Color.cyan.opacity(0.25)
+                    : Color.white.opacity(0.08))
+                .clipShape(Capsule())
+                .disabled(selection == nil)
                 Button("Now") {
                     scrubOffset = 0
                     chartDate = nil
@@ -534,6 +565,7 @@ struct SkyChartView: View {
         drawStars(in: ctx, stars: projectedStars(proj: proj, size: size))
         drawTargets(in: ctx, proj: proj)
         drawPlanets(in: ctx, proj: proj)
+        drawFOV(in: ctx, proj: proj)
         drawCardinals(in: ctx, proj: proj)
     }
 
@@ -716,6 +748,58 @@ struct SkyChartView: View {
             ctx.draw(Text(planet.symbol + " " + planet.displayName),
                      at: CGPoint(x: p.x + r + 8, y: p.y - r - 6))
         }
+    }
+
+    /// Sensor-frame indicator for the tap selection: a thin cyan
+    /// rectangle, no fill — visually distinct from the orange DSO
+    /// crosshairs and the pale-gold planet discs.
+    ///
+    /// v1 simplification: the frame is axis-aligned to the RA/Dec
+    /// grid (RA half-width scaled by 1/cos(dec), clamped away from the
+    /// pole), centered on the selection at the EFFECTIVE chart time so
+    /// it time-travels with the scrub. Camera rotation is out of
+    /// scope — it only matters near the celestial pole; elsewhere the
+    /// axis-aligned frame is the correct framing check.
+    private func drawFOV(in ctx: GraphicsContext,
+                         proj: SkyProjection) {
+        guard showFOV,
+              let sel = selection,
+              let w = fovWidthDeg, let h = fovHeightDeg,
+              w > 0, h > 0 else { return }
+        let center = AstroMath.altAz(ra: sel.ra, dec: sel.dec,
+                                     julianDate: julianDate,
+                                     lat: lat, lon: lon)
+        guard center.alt > 0 else { return }
+        let cosDec = max(0.1, cos(sel.dec * Double.pi / 180))
+        let dRA = (w / 2) / cosDec
+        let dDec = h / 2
+        let corners: [(Double, Double)] = [
+            (sel.ra - dRA, sel.dec - dDec),
+            (sel.ra + dRA, sel.dec - dDec),
+            (sel.ra + dRA, sel.dec + dDec),
+            (sel.ra - dRA, sel.dec + dDec),
+        ]
+        var pts: [CGPoint] = []
+        pts.reserveCapacity(4)
+        for (ra, dec) in corners {
+            // altAz normalizes out-of-range RA itself, so RA=0
+            // crossings need no special handling here.
+            let a = AstroMath.altAz(ra: ra, dec: dec,
+                                    julianDate: julianDate,
+                                    lat: lat, lon: lon)
+            guard let p = proj.point(altDeg: a.alt, azDeg: a.az) else {
+                return
+            }
+            pts.append(p)
+        }
+        var path = Path()
+        path.move(to: pts[0])
+        for p in pts.dropFirst() {
+            path.addLine(to: p)
+        }
+        path.closeSubpath()
+        ctx.stroke(path, with: .color(Color.cyan.opacity(0.85)),
+                   lineWidth: 1.5)
     }
 
     // MARK: - Hit testing
